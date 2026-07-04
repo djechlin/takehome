@@ -617,17 +617,19 @@ async function loadRuns() {
       return;
     }
     $('runsempty').textContent = '';
-    const head = ['when', 'type', 'question', 'N', 'P', 'temp', 'web',
-                  'ok/err', 'distinct', 'rps', 'p50', 'p95', 'p100', 'wall', 'cost']
+    const head = ['when', 'question', 'N', 'P', 'temp', 'web',
+                  'ok/err', 'distinct', 'rps', 'p50', 'in tok', 'out tok', 'cost']
       .map(h => '<th>' + h + '</th>').join('');
+    const tok = v => (v == null ? '–' : v.toLocaleString());
     const body = rows.map(x => {
-      const when = x.created_at ? x.created_at.replace('T', ' ').slice(5, 16) : '–';
+      const when = x.created_at
+        ? new Date(x.created_at).toLocaleString([],
+            {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'})
+        : '–';
       const p = Array.isArray(x.p) ? x.p.join('/') : (x.p ?? '–');
       const okerr = (x.ok ?? '–') + ' / ' + (x.errors ?? '–');
-      const wall = x.wall_ms != null ? (x.wall_ms / 1000).toFixed(1) + 's' : '–';
       return '<tr' + (x.errors ? ' class="haserr"' : '') + '>' +
         '<td>' + when + '</td>' +
-        '<td>' + x.type + '</td>' +
         '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="' + esc(x.question || '') + '">' + esc(x.question || '') + '</td>' +
         '<td>' + (x.n ?? '–') + '</td>' +
         '<td>' + p + '</td>' +
@@ -637,10 +639,9 @@ async function loadRuns() {
         '<td>' + (x.distinct_count ?? '–') + '</td>' +
         '<td>' + (x.throughput_rps ?? '–') + '</td>' +
         '<td>' + secD(x.p50) + '</td>' +
-        '<td>' + secD(x.p95) + '</td>' +
-        '<td>' + secD(x.p100) + '</td>' +
-        '<td>' + wall + '</td>' +
-        '<td>' + (x.cost != null ? usd(x.cost, 3) : '–') + '</td></tr>';
+        '<td>' + tok(x.in_tok) + '</td>' +
+        '<td>' + tok(x.out_tok) + '</td>' +
+        '<td>' + (x.cost != null ? '$' + x.cost.toFixed(2) : '–') + '</td></tr>';
     }).join('');
     $('runstable').innerHTML = '<tr>' + head + '</tr>' + body;
   } catch (e) {

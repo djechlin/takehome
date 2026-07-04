@@ -114,8 +114,9 @@ def seed_runs():
                     "ok": 98,
                     "error_count": 2,
                     "distinct_count": 83,
-                    "latency_ms": {"p95": 3400},
-                    "cost": {"total": 0.0241},
+                    "latency_ms": {"p50": 1900},
+                    "usage": {"input": 39200, "output": 945000},
+                    "cost": {"total": 2.41},
                 },
             },
             {

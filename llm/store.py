@@ -60,6 +60,7 @@ def recent_runs(limit=20):
         summ = d.get("summary") or {}
         lat = agg.get("latency_ms") or {}
         is_sweep = d.get("type") == "sweep"
+        usage = agg.get("usage") or {}
         out.append(
             {
                 "id": str(d["_id"]),
@@ -78,9 +79,8 @@ def recent_runs(limit=20):
                 "distinct_count": agg.get("distinct_count"),
                 "throughput_rps": agg.get("throughput_rps") or summ.get("best_rps"),
                 "p50": lat.get("p50"),
-                "p95": lat.get("p95"),
-                "p100": lat.get("p100"),
-                "wall_ms": agg.get("wall_ms"),
+                "in_tok": usage.get("input"),
+                "out_tok": usage.get("output"),
                 "cost": (agg.get("cost") or {}).get("total") or summ.get("total_cost"),
             }
         )
