@@ -39,6 +39,9 @@ stop: ## Stop the background web app
 smoke: ## One-shot Vertex reachability check
 	$(PY) scripts/smoke_test.py
 
+probe: ## Show per-request latency + hidden thinking-token usage
+	$(PY) scripts/probe_thinking.py
+
 test: ## Run the test suite
 	$(PY) -m pytest -q
 
