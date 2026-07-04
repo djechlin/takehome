@@ -282,6 +282,11 @@ PAGE = """<!doctype html>
             align-items: center; gap: 10px; }
   .sect-h button { margin: 0; padding: 4px 10px; font-size: 12px; background: #666; }
   .empty { color: #aaa; font-size: 12px; margin-top: 6px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid #e3e3e3; margin: 18px 0 4px; }
+  .tab { margin: 0; padding: 8px 16px; font: inherit; font-weight: 600; font-size: 14px;
+         background: none; color: #888; border: 0; border-bottom: 2px solid transparent;
+         border-radius: 0; cursor: pointer; }
+  .tab.active { color: #1a1a1a; border-bottom-color: #1a1a1a; }
 </style>
 </head>
 <body>
@@ -292,6 +297,13 @@ PAGE = """<!doctype html>
     Reports latency percentiles, throughput, cost, and which distinct answers
     came back. Each run is capped at <b>$10</b> of spend and saved to MongoDB.
   </p>
+
+  <div class="tabs">
+    <button class="tab active" id="tabbtn-run" onclick="showTab('run')">Load test</button>
+    <button class="tab" id="tabbtn-runs" onclick="showTab('runs')">Runs</button>
+  </div>
+
+  <div id="tab-run">
   <label>System prompt</label>
   <input id="sys" value="You are a helpful assistant.">
   <label>Question</label>
@@ -386,14 +398,19 @@ PAGE = """<!doctype html>
     <table id="sweeptable"></table>
     <div class="runid" id="sweepid"></div>
   </div>
+  </div><!-- /tab-run -->
 
-  <!-- Recent runs from MongoDB -->
-  <div class="sect-h">Recent runs
-    <button onclick="loadRuns()">refresh</button>
-    <span class="or" style="font-weight:400">saved to MongoDB · evertune_loadtest.run</span>
+  <div id="tab-runs" hidden>
+    <div class="sect-h">All runs — one row per run
+      <button onclick="loadRuns()">refresh</button>
+      <span class="or" style="font-weight:400">summary stats from MongoDB · evertune_loadtest.run</span>
+    </div>
+    <p class="caption">Each row summarizes one saved run or sweep (not the full
+      per-request dump). Newest first. Sweeps show their P list; latency columns
+      are the single-run values.</p>
+    <div style="overflow-x:auto"><table id="runstable"></table></div>
+    <div class="empty" id="runsempty"></div>
   </div>
-  <table id="runstable"></table>
-  <div class="empty" id="runsempty"></div>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -553,19 +570,29 @@ async function loadRuns() {
       return;
     }
     $('runsempty').textContent = '';
-    const head = ['when', 'type', 'question', 'N', 'P', 'rps', 'p95', 'err', 'cost']
+    const num = v => (v == null ? '–' : v.toLocaleString());
+    const head = ['when', 'type', 'question', 'N', 'P', 'temp', 'web',
+                  'ok/err', 'rps', 'p50', 'p95', 'p100', 'wall', 'cost']
       .map(h => '<th>' + h + '</th>').join('');
     const body = rows.map(x => {
       const when = x.created_at ? x.created_at.replace('T', ' ').slice(5, 16) : '–';
+      const p = Array.isArray(x.p) ? x.p.join('/') : (x.p ?? '–');
+      const okerr = (x.ok ?? '–') + ' / ' + (x.errors ?? '–');
+      const wall = x.wall_ms != null ? (x.wall_ms / 1000).toFixed(1) + 's' : '–';
       return '<tr' + (x.errors ? ' class="haserr"' : '') + '>' +
         '<td>' + when + '</td>' +
         '<td>' + x.type + '</td>' +
-        '<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis">' + esc(x.question || '') + '</td>' +
+        '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="' + esc(x.question || '') + '">' + esc(x.question || '') + '</td>' +
         '<td>' + (x.n ?? '–') + '</td>' +
-        '<td>' + (Array.isArray(x.p) ? x.p.join('/') : (x.p ?? '–')) + '</td>' +
+        '<td>' + p + '</td>' +
+        '<td>' + (x.temperature ?? '–') + '</td>' +
+        '<td>' + (x.web ? 'yes' : '–') + '</td>' +
+        '<td>' + okerr + '</td>' +
         '<td>' + (x.throughput_rps ?? '–') + '</td>' +
-        '<td>' + (x.p95 ?? '–') + '</td>' +
-        '<td>' + (x.errors ?? '–') + '</td>' +
+        '<td>' + num(x.p50) + '</td>' +
+        '<td>' + num(x.p95) + '</td>' +
+        '<td>' + num(x.p100) + '</td>' +
+        '<td>' + wall + '</td>' +
         '<td>' + (x.cost != null ? usd(x.cost, 3) : '–') + '</td></tr>';
     }).join('');
     $('runstable').innerHTML = '<tr>' + head + '</tr>' + body;
@@ -574,7 +601,16 @@ async function loadRuns() {
   }
 }
 
-loadRuns();  // show saved history as soon as the page opens
+function showTab(name) {
+  const run = name === 'run';
+  $('tab-run').hidden = !run;
+  $('tab-runs').hidden = run;
+  $('tabbtn-run').className = 'tab' + (run ? ' active' : '');
+  $('tabbtn-runs').className = 'tab' + (run ? '' : ' active');
+  if (!run) loadRuns();  // always show fresh history when opening the tab
+}
+
+loadRuns();  // prime the history so the Runs tab is populated when first opened
 </script>
 </body>
 </html>"""

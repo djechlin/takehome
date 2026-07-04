@@ -55,16 +55,25 @@ def recent_runs(limit=20):
         cfg = d.get("config") or {}
         agg = d.get("aggregate") or {}
         summ = d.get("summary") or {}
+        lat = agg.get("latency_ms") or {}
+        is_sweep = d.get("type") == "sweep"
         out.append({
             "id": str(d["_id"]),
             "created_at": d["created_at"].isoformat() if d.get("created_at") else None,
             "type": d.get("type", "run"),
-            "question": (cfg.get("question") or "")[:60],
+            "model": cfg.get("model"),
+            "question": (cfg.get("question") or "")[:70],
             "n": cfg.get("n"),
-            "p": cfg.get("p") if d.get("type") != "sweep" else cfg.get("p_list"),
-            "throughput_rps": agg.get("throughput_rps") or summ.get("best_rps"),
-            "p95": (agg.get("latency_ms") or {}).get("p95"),
+            "p": cfg.get("p_list") if is_sweep else cfg.get("p"),
+            "temperature": cfg.get("temperature"),
+            "web": bool(cfg.get("enable_web")),
+            "ok": agg.get("ok"),
             "errors": agg.get("error_count"),
+            "throughput_rps": agg.get("throughput_rps") or summ.get("best_rps"),
+            "p50": lat.get("p50"),
+            "p95": lat.get("p95"),
+            "p100": lat.get("p100"),
+            "wall_ms": agg.get("wall_ms"),
             "cost": (agg.get("cost") or {}).get("total") or summ.get("total_cost"),
         })
     return out

@@ -105,6 +105,13 @@ def main():
             page.screenshot(path=f"{OUT}/ui_sweep.png", full_page=True)
             print(f"wrote {OUT}/ui_sweep.png")
 
+            # Second tab: one summary row per saved run, from the real /runs endpoint.
+            page.click("#tabbtn-runs")
+            page.wait_for_selector("#tab-runs:not([hidden])")
+            page.wait_for_selector("#runstable tr")
+            page.screenshot(path=f"{OUT}/ui_runs_tab.png", full_page=True)
+            print(f"wrote {OUT}/ui_runs_tab.png")
+
             browser.close()
     finally:
         _collection().delete_many({MARK: True})
