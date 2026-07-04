@@ -105,12 +105,13 @@ def main():
             page.screenshot(path=f"{OUT}/ui_sweep.png", full_page=True)
             print(f"wrote {OUT}/ui_sweep.png")
 
-            # Second tab: one summary row per saved run, from the real /runs endpoint.
-            page.click("#tabbtn-runs")
+            # Second tab via its own URL — proves a refresh on /runs stays put.
+            page.goto(URL + "/runs", wait_until="networkidle")
             page.wait_for_selector("#tab-runs:not([hidden])")
             page.wait_for_selector("#runstable tr")
+            assert page.url.endswith("/runs"), page.url
             page.screenshot(path=f"{OUT}/ui_runs_tab.png", full_page=True)
-            print(f"wrote {OUT}/ui_runs_tab.png")
+            print(f"wrote {OUT}/ui_runs_tab.png (url={page.url})")
 
             browser.close()
     finally:

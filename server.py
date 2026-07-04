@@ -562,7 +562,7 @@ function renderSweep(d) {
 
 async function loadRuns() {
   try {
-    const r = await fetch('/runs');
+    const r = await fetch('/api/runs');
     const d = await r.json();
     const rows = d.runs || [];
     if (!rows.length) {
@@ -601,16 +601,22 @@ async function loadRuns() {
   }
 }
 
-function showTab(name) {
-  const run = name === 'run';
+function showTab(name, push = true) {
+  const run = name !== 'runs';
   $('tab-run').hidden = !run;
   $('tab-runs').hidden = run;
   $('tabbtn-run').className = 'tab' + (run ? ' active' : '');
   $('tabbtn-runs').className = 'tab' + (run ? '' : ' active');
+  // Keep the URL in sync so a refresh stays on the current tab.
+  const path = run ? '/' : '/runs';
+  if (push && location.pathname !== path) history.pushState({}, '', path);
   if (!run) loadRuns();  // always show fresh history when opening the tab
 }
 
-loadRuns();  // prime the history so the Runs tab is populated when first opened
+// Pick the tab from the URL on load, and follow back/forward.
+window.addEventListener('popstate', () => showTab(location.pathname === '/runs' ? 'runs' : 'run', false));
+showTab(location.pathname === '/runs' ? 'runs' : 'run', false);
+loadRuns();  // prime history so the Runs tab is ready even when landing on /
 </script>
 </body>
 </html>"""
@@ -626,9 +632,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
+        # Both tab URLs serve the same page; the client picks the tab from the
+        # path so a refresh on /runs stays on the Runs tab.
+        if self.path in ("/", "/index.html", "/runs"):
             self._send(200, PAGE, "text/html; charset=utf-8")
-        elif self.path == "/runs":
+        elif self.path == "/api/runs":
             rows, err = try_recent_runs(20)
             self._send(200, json.dumps({"runs": rows or [], "error": err}))
         else:
