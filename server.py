@@ -347,7 +347,7 @@ PAGE = """<!doctype html>
   <label>System prompt</label>
   <input id="sys" value="You are a helpful assistant.">
   <label>Question</label>
-  <textarea id="q" rows="3">What are the best running shoe brands? Answer with a short list.</textarea>
+  <textarea id="q" rows="3">good co-op games for switch</textarea>
 
   <div class="row">
     <div>
