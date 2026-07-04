@@ -5,6 +5,7 @@ Run:  python3 server.py     ->  http://localhost:4454
 """
 import asyncio
 import json
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -12,6 +13,18 @@ from llm import Gemini
 
 PORT = 4454
 llm = Gemini()
+
+# Run ONE event loop for the whole process, in a background thread. The
+# google-genai async client's httpx pool binds to the loop it's first used on;
+# using asyncio.run() per request would create and close a new loop each time,
+# so the second request would hit "RuntimeError: Event loop is closed". Each
+# request thread dispatches its coroutine onto this shared loop and blocks.
+_loop = asyncio.new_event_loop()
+threading.Thread(target=_loop.run_forever, daemon=True).start()
+
+
+def run_async(coro):
+    return asyncio.run_coroutine_threadsafe(coro, _loop).result()
 
 PAGE = """<!doctype html>
 <html>
@@ -99,7 +112,7 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             req = json.loads(self.rfile.read(length) or b"{}")
             start = time.time()
-            resp = asyncio.run(llm.ask_generic_question(
+            resp = run_async(llm.ask_generic_question(
                 system_prompt=req.get("system_prompt", ""),
                 question=req.get("question", ""),
                 temperature=float(req.get("temperature", 0.7)),
