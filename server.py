@@ -1,16 +1,29 @@
-"""Tiny web app to try the Gemini provider by hand — one question at a time,
-no chat context. Serves a form and calls Gemini.ask_generic_question.
+"""Load-test console for the Gemini provider.
+
+You set a total request count N and a parallelism factor P, plus the model knobs
+(temperature, thinking budget, web grounding, logprobs). The server fires N
+copies of the SAME query, pushing them through an asyncio.Semaphore(P) so at
+most P are in flight at once — a queue you can widen to hunt for the P where
+Vertex starts to degrade (latency climbs, errors appear, throughput plateaus).
+
+Every run reports wall time, throughput, latency percentiles (p50/p95/p99/p100),
+per-request queue wait, cost, and the distinct answers with frequencies (the
+"which brands, how often" recall view). Each run is capped at $10 of spend and
+saved in full to a local MongoDB (`evertune_loadtest.run`).
 
 Run:  python3 server.py     ->  http://localhost:4454
 """
 import asyncio
+import glob
 import json
 import os
+import sys
 import threading
 import time
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from llm import Gemini
+from llm import Gemini, try_save_run
 
 PORT = 4454
 llm = Gemini()
@@ -20,6 +33,12 @@ llm = Gemini()
 # via env if prices change or a different model is used.
 PRICE_IN_PER_M = float(os.getenv("GEMINI_PRICE_INPUT_PER_M", "0.30"))
 PRICE_OUT_PER_M = float(os.getenv("GEMINI_PRICE_OUTPUT_PER_M", "2.50"))
+
+# Guardrails. N and P are bounded so a stray "100000" can't melt the quota or the
+# box; every run also self-aborts once spend crosses MAX_RUN_COST.
+MAX_SAMPLES = int(os.getenv("GEMINI_MAX_SAMPLES", "2000"))
+MAX_PARALLELISM = int(os.getenv("GEMINI_MAX_PARALLELISM", "500"))
+MAX_RUN_COST = float(os.getenv("GEMINI_MAX_RUN_COST", "10.0"))
 
 # Run ONE event loop for the whole process, in a background thread. The
 # google-genai async client's httpx pool binds to the loop it's first used on;
@@ -33,76 +52,276 @@ threading.Thread(target=_loop.run_forever, daemon=True).start()
 def run_async(coro):
     return asyncio.run_coroutine_threadsafe(coro, _loop).result()
 
+
+def _cost(in_tok, out_tok):
+    return in_tok / 1e6 * PRICE_IN_PER_M + out_tok / 1e6 * PRICE_OUT_PER_M
+
+
+async def run_batch(params, n, p, cost_cap):
+    """Push N identical requests through a width-P queue.
+
+    Returns (records, wall_ms, capped). `capped` is True if the run hit the
+    spend cap and skipped the remaining queued requests. Timing is monotonic:
+      wait_ms    = time spent queued waiting for a semaphore slot
+      service_ms = time from acquiring the slot to the response (the real
+                   latency the model+network cost us at this P)
+    """
+    sem = asyncio.Semaphore(p)
+    lock = asyncio.Lock()
+    state = {"cost": 0.0, "capped": False}
+    t0 = time.perf_counter()
+
+    def ms(dt):
+        return int(dt * 1000)
+
+    async def one(i):
+        submit = time.perf_counter()
+        # Cheap pre-check: if we're already capped, don't even queue.
+        if state["capped"]:
+            return {"ok": False, "skipped": True, "index": i}
+        async with sem:
+            if state["capped"]:
+                return {"ok": False, "skipped": True, "index": i}
+            acquired = time.perf_counter()
+            try:
+                resp = await llm.ask_generic_question(**params)
+                done = time.perf_counter()
+                cost = _cost(resp.input_tokens, resp.output_tokens)
+                async with lock:
+                    state["cost"] += cost
+                    if state["cost"] >= cost_cap:
+                        state["capped"] = True
+                return {
+                    "ok": True,
+                    "index": i,
+                    "answer": resp.answer,
+                    "input": resp.input_tokens,
+                    "output": resp.output_tokens,
+                    "reasoning": resp.reasoning_tokens,
+                    "cost": cost,
+                    "grounded": resp.grounded,
+                    "sources": list(resp.sources),
+                    "search_queries": list(resp.search_queries),
+                    "avg_logprob": resp.avg_logprob,
+                    "wait_ms": ms(acquired - submit),
+                    "service_ms": ms(done - acquired),
+                    "start_offset_ms": ms(acquired - t0),
+                }
+            except Exception as e:
+                done = time.perf_counter()
+                return {
+                    "ok": False,
+                    "index": i,
+                    "error": f"{type(e).__name__}: {e}",
+                    "wait_ms": ms(acquired - submit),
+                    "service_ms": ms(done - acquired),
+                    "start_offset_ms": ms(acquired - t0),
+                }
+
+    records = await asyncio.gather(*[one(i) for i in range(n)])
+    wall_ms = ms(time.perf_counter() - t0)
+    return records, wall_ms, state["capped"]
+
+
+def _pct(sorted_vals, p):
+    if not sorted_vals:
+        return 0
+    i = min(len(sorted_vals) - 1, int(round((p / 100) * (len(sorted_vals) - 1))))
+    return sorted_vals[i]
+
+
+def aggregate(records, wall_ms, p, capped):
+    """Roll per-request records into the load-test numbers the UI shows."""
+    ok = [r for r in records if r["ok"]]
+    errors = [r["error"] for r in records if not r["ok"] and not r.get("skipped")]
+    skipped = sum(1 for r in records if r.get("skipped"))
+
+    in_tok = sum(r["input"] for r in ok)
+    out_tok = sum(r["output"] for r in ok)
+    reasoning = sum(r["reasoning"] for r in ok)
+    cost_total = sum(r["cost"] for r in ok)
+    n_ok = len(ok) or 1
+
+    service = sorted(r["service_ms"] for r in ok)
+    waits = sorted(r["wait_ms"] for r in ok)
+    throughput = (len(ok) / (wall_ms / 1000)) if wall_ms else 0
+
+    # Recall view: distinct answers (whitespace-normalized) by frequency.
+    counts = {}
+    for r in ok:
+        key = " ".join((r["answer"] or "").split())
+        counts[key] = counts.get(key, 0) + 1
+    distinct = sorted(
+        ({"answer": a, "count": c} for a, c in counts.items()),
+        key=lambda d: -d["count"],
+    )
+
+    logprobs = [r["avg_logprob"] for r in ok if r["avg_logprob"] is not None]
+    sources = sorted({s for r in ok for s in r["sources"]})
+    queries = sorted({q for r in ok for q in r["search_queries"]})
+
+    return {
+        "parallelism": p,
+        "requested": len(records),
+        "ok": len(ok),
+        "errors": errors,
+        "error_count": len(errors),
+        "skipped": skipped,
+        "capped": capped,
+        "wall_ms": wall_ms,
+        "throughput_rps": round(throughput, 2),
+        "grounded": any(r["grounded"] for r in ok),
+        "distinct": distinct,
+        "sources": sources,
+        "search_queries": queries,
+        "avg_logprob": (sum(logprobs) / len(logprobs)) if logprobs else None,
+        "latency_ms": {
+            "p50": _pct(service, 50), "p95": _pct(service, 95),
+            "p99": _pct(service, 99), "p100": service[-1] if service else 0,
+        },
+        "queue_ms": {"p50": _pct(waits, 50), "p100": waits[-1] if waits else 0},
+        "usage": {
+            "input": in_tok, "reasoning": reasoning,
+            "answer": out_tok - reasoning, "output": out_tok,
+            "total": in_tok + out_tok,
+        },
+        "cost": {
+            "total": cost_total,
+            "per_request": cost_total / n_ok,
+            "per_1k": cost_total / n_ok * 1000,
+        },
+        "price": {"input_per_m": PRICE_IN_PER_M, "output_per_m": PRICE_OUT_PER_M},
+    }
+
+
 PAGE = """<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>Gemini 2.5 Flash — one-shot</title>
+<title>Gemini 2.5 Flash — load-test console</title>
 <style>
-  body { font: 15px/1.5 -apple-system, system-ui, sans-serif; max-width: 720px;
+  body { font: 15px/1.5 -apple-system, system-ui, sans-serif; max-width: 820px;
          margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
   h1 { font-size: 18px; }
   label { display: block; margin: 14px 0 4px; font-weight: 600; font-size: 13px; }
-  textarea, input { width: 100%; box-sizing: border-box; padding: 8px;
+  textarea, input, select { width: 100%; box-sizing: border-box; padding: 8px;
                     font: inherit; border: 1px solid #ccc; border-radius: 6px; }
   textarea { resize: vertical; }
+  .row { display: flex; gap: 14px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 120px; }
+  .check { display: flex; align-items: center; gap: 8px; margin-top: 22px; }
+  .check input { width: auto; }
+  .check label { margin: 0; }
+  .hint { color: #aaa; font-size: 11px; margin-top: 4px; }
   button { margin-top: 16px; padding: 9px 18px; font: inherit; font-weight: 600;
            border: 0; border-radius: 6px; background: #1a1a1a; color: #fff; cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
-  /* Analytics panel — the interesting part, so it sits ABOVE the answer. */
   #panel { display: none; margin-top: 22px; border: 1px solid #e3e3e3;
            border-radius: 10px; padding: 14px 16px; background: #fafafa; }
   #panel.show { display: block; }
-  .tiles { display: flex; gap: 28px; flex-wrap: wrap; }
+  .tiles { display: flex; gap: 24px; flex-wrap: wrap; }
   .tile .n { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .tile .k { font-size: 11px; color: #777; text-transform: uppercase; letter-spacing: .04em; }
   .detail { margin-top: 12px; padding-top: 12px; border-top: 1px solid #ececec;
             font-size: 12px; color: #555; display: flex; gap: 18px; flex-wrap: wrap; }
   .detail b { color: #1a1a1a; font-variant-numeric: tabular-nums; font-weight: 600; }
-  .hint { color: #aaa; font-size: 11px; margin-top: 8px; }
-  #answer { white-space: pre-wrap; margin-top: 16px; padding: 14px; background: #f5f5f5;
-            border-radius: 8px; min-height: 20px; }
-  #answer .lbl { font-size: 11px; color: #999; text-transform: uppercase;
-                 letter-spacing: .04em; display: block; margin-bottom: 6px; }
-  .err { color: #b00020; }
+  .banner { margin-top: 12px; padding: 8px 12px; border-radius: 6px; font-size: 12px; }
+  .banner.cap { background: #fff4e5; color: #8a5300; }
+  .banner.err { background: #fdecef; color: #b00020; }
+  .distinct { margin-top: 14px; padding-top: 12px; border-top: 1px solid #ececec; }
+  .distinct h3 { font-size: 11px; color: #777; text-transform: uppercase;
+                 letter-spacing: .04em; margin: 0 0 8px; }
+  .da { display: flex; gap: 10px; align-items: baseline; padding: 5px 0;
+        border-bottom: 1px dashed #eee; }
+  .da .c { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 46px; }
+  .da .bar { height: 6px; background: #1a1a1a; border-radius: 3px; }
+  .da .txt { flex: 1; white-space: pre-wrap; font-size: 13px; }
+  .meta { margin-top: 12px; font-size: 12px; color: #555; }
+  .meta code { background: #eee; padding: 1px 5px; border-radius: 4px; }
+  .runid { color: #aaa; font-size: 11px; margin-top: 8px; }
 </style>
 </head>
 <body>
-  <h1>Gemini 2.5 Flash (Vertex) — single question</h1>
+  <h1>Gemini 2.5 Flash (Vertex) — load-test console</h1>
   <label>System prompt</label>
   <input id="sys" value="You are a helpful assistant.">
   <label>Question</label>
-  <textarea id="q" rows="4">What is the capital of France?</textarea>
-  <label>Temperature</label>
-  <input id="temp" type="number" step="0.1" min="0" max="2" value="0.7" style="width:100px">
-  <br><button id="go" onclick="ask()">Ask</button>
+  <textarea id="q" rows="3">What are the best running shoe brands? Answer with a short list.</textarea>
+
+  <div class="row">
+    <div>
+      <label>N — total requests</label>
+      <input id="n" type="number" step="1" min="1" value="50">
+      <div class="hint">same query, N times</div>
+    </div>
+    <div>
+      <label>P — parallelism</label>
+      <input id="p" type="number" step="1" min="1" value="10">
+      <div class="hint">max in flight; sweep to find degrade</div>
+    </div>
+    <div>
+      <label>Temperature</label>
+      <input id="temp" type="number" step="0.1" min="0" max="2" value="1.0">
+      <div class="hint">~1.0 = real app &amp; tail recall</div>
+    </div>
+    <div>
+      <label>Thinking budget</label>
+      <input id="think" type="number" step="1" min="-1" value="-1">
+      <div class="hint">-1 dyn · 0 off · N cap</div>
+    </div>
+  </div>
+  <div class="row">
+    <div class="check">
+      <input id="web" type="checkbox">
+      <label for="web">Enable web (Google Search grounding)</label>
+    </div>
+    <div class="check">
+      <input id="lp" type="checkbox">
+      <label for="lp">Request logprobs (top-5)</label>
+    </div>
+  </div>
+
+  <button id="go" onclick="ask()">Run load test</button>
 
   <div id="panel">
     <div class="tiles">
-      <div class="tile"><div class="n" id="t-latency">–</div><div class="k">latency</div></div>
+      <div class="tile"><div class="n" id="t-wall">–</div><div class="k">wall time</div></div>
+      <div class="tile"><div class="n" id="t-rps">–</div><div class="k">throughput</div></div>
+      <div class="tile"><div class="n" id="t-lat">–</div><div class="k">latency p50/p95/p100</div></div>
       <div class="tile"><div class="n" id="t-cost">–</div><div class="k">cost</div></div>
-      <div class="tile"><div class="n" id="t-total">–</div><div class="k">total tokens</div></div>
+      <div class="tile"><div class="n" id="t-uniq">–</div><div class="k">distinct / ok</div></div>
     </div>
     <div class="detail">
-      <span>prompt <b id="d-prompt">–</b></span>
+      <span>P <b id="d-p">–</b></span>
+      <span>ok <b id="d-ok">–</b></span>
+      <span>errors <b id="d-err">–</b></span>
+      <span>skipped <b id="d-skip">–</b></span>
+      <span>lat p99 <b id="d-p99">–</b></span>
+      <span>queue p50/max <b id="d-queue">–</b></span>
       <span>thinking <b id="d-think">–</b></span>
-      <span>answer <b id="d-answer">–</b></span>
-      <span>in <b id="d-incost">–</b> · out <b id="d-outcost">–</b></span>
-      <span>≈ <b id="d-per1k">–</b> / 1k requests</span>
+      <span>grounded <b id="d-grounded">–</b></span>
+      <span>avg logprob <b id="d-logprob">–</b></span>
+      <span>$/1k req <b id="d-per1k">–</b></span>
     </div>
-    <div class="hint" id="d-price"></div>
+    <div id="banner"></div>
+    <div class="distinct">
+      <h3>Distinct answers (recall)</h3>
+      <div id="distinct"></div>
+    </div>
+    <div class="meta" id="meta"></div>
+    <div class="runid" id="runid"></div>
   </div>
 
-  <div id="answer"></div>
 <script>
 const $ = id => document.getElementById(id);
 const usd = (n, p = 2) => '$' + (n < 0.01 ? n.toPrecision(p) : n.toFixed(p));
+const esc = s => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+const secs = ms => (ms / 1000).toFixed(1) + ' s';
 
 async function ask() {
   $('go').disabled = true;
+  $('go').textContent = 'running…';
   $('panel').className = '';
-  $('answer').className = '';
-  $('answer').textContent = 'thinking…';
   try {
     const r = await fetch('/ask', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -110,31 +329,68 @@ async function ask() {
         system_prompt: $('sys').value,
         question: $('q').value,
         temperature: parseFloat($('temp').value),
+        thinking_budget: parseInt($('think').value, 10),
+        n: parseInt($('n').value, 10),
+        p: parseInt($('p').value, 10),
+        enable_web: $('web').checked,
+        logprobs: $('lp').checked,
       })
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || 'request failed');
-    const u = d.usage, c = d.cost;
-    $('t-latency').textContent = d.latency_ms + ' ms';
-    $('t-cost').textContent = usd(c.total, 2);
-    $('t-total').textContent = u.total.toLocaleString();
-    $('d-prompt').textContent = u.input.toLocaleString();
-    $('d-think').textContent = u.reasoning.toLocaleString();
-    $('d-answer').textContent = u.answer.toLocaleString();
-    $('d-incost').textContent = usd(c.input, 2);
-    $('d-outcost').textContent = usd(c.output, 2);
-    $('d-per1k').textContent = usd(c.per_1k, 2);
-    $('d-price').textContent =
-      `list price $${d.price.input_per_m}/1M in · $${d.price.output_per_m}/1M out (approx)`;
-    $('panel').className = 'show';
-    $('answer').innerHTML = '<span class="lbl">response</span>';
-    $('answer').append(document.createTextNode(d.answer));
+    render(d);
   } catch (e) {
-    $('answer').className = 'err';
-    $('answer').textContent = e.message;
+    $('panel').className = 'show';
+    $('banner').innerHTML = '<div class="banner err">' + esc(e.message) + '</div>';
   } finally {
     $('go').disabled = false;
+    $('go').textContent = 'Run load test';
   }
+}
+
+function render(d) {
+  const u = d.usage, c = d.cost, l = d.latency_ms;
+  $('t-wall').textContent = secs(d.wall_ms);
+  $('t-rps').textContent = d.throughput_rps + ' rps';
+  $('t-lat').textContent = l.p50 + '/' + l.p95 + '/' + l.p100 + ' ms';
+  $('t-cost').textContent = usd(c.total, 2);
+  $('t-uniq').textContent = d.distinct.length + ' / ' + d.ok;
+  $('d-p').textContent = d.parallelism;
+  $('d-ok').textContent = d.ok + ' / ' + d.requested;
+  $('d-err').textContent = d.error_count;
+  $('d-skip').textContent = d.skipped;
+  $('d-p99').textContent = l.p99 + ' ms';
+  $('d-queue').textContent = d.queue_ms.p50 + ' / ' + d.queue_ms.p100 + ' ms';
+  $('d-think').textContent = u.reasoning.toLocaleString();
+  $('d-grounded').textContent = d.grounded ? 'yes' : 'no';
+  $('d-logprob').textContent = d.avg_logprob === null ? '–' : d.avg_logprob.toFixed(3);
+  $('d-per1k').textContent = usd(c.per_1k, 2);
+
+  let banner = '';
+  if (d.capped) banner += '<div class="banner cap">Run hit the $' + d.cost_cap +
+    ' spend cap — remaining requests skipped.</div>';
+  if (d.error_count) banner += '<div class="banner err">' + esc(d.errors[0]) +
+    (d.error_count > 1 ? ' (+' + (d.error_count - 1) + ' more)' : '') + '</div>';
+  $('banner').innerHTML = banner;
+
+  const max = d.distinct.reduce((m, x) => Math.max(m, x.count), 1);
+  $('distinct').innerHTML = d.distinct.map(x =>
+    '<div class="da"><span class="c">' + x.count + '×</span>' +
+    '<span class="bar" style="width:' + (140 * x.count / max) + 'px"></span>' +
+    '<span class="txt">' + esc(x.answer || '(empty)') + '</span></div>'
+  ).join('') || '<span class="banner err">no successful samples</span>';
+
+  let meta = '';
+  if (d.search_queries.length)
+    meta += '<div>searched: ' + d.search_queries.map(q => '<code>' + esc(q) + '</code>').join(' ') + '</div>';
+  if (d.sources.length)
+    meta += '<div>sources: ' + d.sources.slice(0, 12).map(esc).join(' · ') + '</div>';
+  meta += '<div>list price $' + d.price.input_per_m + '/1M in · $' + d.price.output_per_m +
+    '/1M out (approx) · ' + usd(c.per_request, 4) + '/request</div>';
+  $('meta').innerHTML = meta;
+
+  $('runid').textContent = d.run_id ? ('saved run ' + d.run_id) : ('not saved: ' + (d.persist_error || '?'));
+  $('panel').className = 'show';
 }
 </script>
 </body>
@@ -163,36 +419,38 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", 0))
             req = json.loads(self.rfile.read(length) or b"{}")
-            start = time.time()
-            resp = run_async(llm.ask_generic_question(
+
+            n = max(1, min(MAX_SAMPLES, int(req.get("n", 1))))
+            p = max(1, min(MAX_PARALLELISM, int(req.get("p", llm.parallelism()))))
+            params = dict(
                 system_prompt=req.get("system_prompt", ""),
                 question=req.get("question", ""),
-                temperature=float(req.get("temperature", 0.7)),
-            ))
-            latency_ms = int((time.time() - start) * 1000)
-            in_tok, out_tok = resp.input_tokens, resp.output_tokens
-            reasoning = resp.reasoning_tokens
-            cost_in = in_tok / 1e6 * PRICE_IN_PER_M
-            cost_out = out_tok / 1e6 * PRICE_OUT_PER_M
-            cost_total = cost_in + cost_out
-            self._send(200, json.dumps({
-                "answer": resp.answer,
-                "latency_ms": latency_ms,
-                "usage": {
-                    "input": in_tok,
-                    "reasoning": reasoning,
-                    "answer": out_tok - reasoning,
-                    "output": out_tok,
-                    "total": in_tok + out_tok,
+                temperature=float(req.get("temperature", 1.0)),
+                thinking_budget=int(req.get("thinking_budget", -1)),
+                enable_web=bool(req.get("enable_web", False)),
+                logprobs=5 if req.get("logprobs") else None,
+            )
+
+            records, wall_ms, capped = run_async(run_batch(params, n, p, MAX_RUN_COST))
+            agg = aggregate(records, wall_ms, p, capped)
+            agg["cost_cap"] = MAX_RUN_COST
+
+            # Persist the whole run (config + aggregate + every request).
+            doc = {
+                "created_at": datetime.now(timezone.utc),
+                "config": {
+                    "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+                    "n": n, "p": p, **params, "cost_cap": MAX_RUN_COST,
                 },
-                "cost": {
-                    "input": cost_in,
-                    "output": cost_out,
-                    "total": cost_total,
-                    "per_1k": cost_total * 1000,
-                },
-                "price": {"input_per_m": PRICE_IN_PER_M, "output_per_m": PRICE_OUT_PER_M},
-            }))
+                "aggregate": {k: v for k, v in agg.items() if k != "distinct"},
+                "distinct": agg["distinct"],
+                "requests": records,
+            }
+            run_id, persist_error = try_save_run(doc)
+            agg["run_id"] = run_id
+            agg["persist_error"] = persist_error
+
+            self._send(200, json.dumps(agg))
         except Exception as e:
             self._send(500, json.dumps({"error": f"{type(e).__name__}: {e}"}))
 
@@ -200,6 +458,30 @@ class Handler(BaseHTTPRequestHandler):
         pass  # quiet
 
 
+def _watch_and_restart(poll=1.0):
+    """Dev auto-reload with no extra deps: poll the mtimes of our source files
+    and re-exec the whole process when one changes. ThreadingHTTPServer sets
+    allow_reuse_address, so the port is free immediately on restart. In-flight
+    requests are dropped — fine for a hand-driven probe. Disable with
+    GEMINI_WATCH=0."""
+    src = lambda: [__file__] + glob.glob(os.path.join(os.path.dirname(__file__) or ".", "llm", "*.py"))
+    seen = {f: os.path.getmtime(f) for f in src() if os.path.exists(f)}
+    while True:
+        time.sleep(poll)
+        for f in src():
+            try:
+                m = os.path.getmtime(f)
+            except OSError:
+                continue
+            if seen.get(f) != m:
+                print(f"\n{os.path.relpath(f)} changed — restarting", flush=True)
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
 if __name__ == "__main__":
-    print(f"Gemini one-shot web app on http://localhost:{PORT}")
+    watch = os.getenv("GEMINI_WATCH", "1") != "0"
+    print(f"Gemini load-test console on http://localhost:{PORT}"
+          f"{' (watching)' if watch else ''}")
+    if watch:
+        threading.Thread(target=_watch_and_restart, daemon=True).start()
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

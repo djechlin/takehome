@@ -42,6 +42,9 @@ smoke: ## One-shot Vertex reachability check
 probe: ## Show per-request latency + hidden thinking-token usage
 	$(PY) scripts/probe_thinking.py
 
+runs: ## Summarize saved load-test runs from MongoDB (P vs latency/errors)
+	@mongosh --quiet evertune_loadtest --eval 'db.run.find({}, {created_at:1, "config.n":1, "config.p":1, "aggregate.ok":1, "aggregate.error_count":1, "aggregate.wall_ms":1, "aggregate.throughput_rps":1, "aggregate.latency_ms":1}).sort({created_at:-1}).limit(20).forEach(r => print(`${r.created_at.toISOString()}  N=${r.config.n} P=${r.config.p}  ok=${r.aggregate.ok} err=${r.aggregate.error_count}  wall=${r.aggregate.wall_ms}ms  ${r.aggregate.throughput_rps}rps  p50/p95/p100=${r.aggregate.latency_ms.p50}/${r.aggregate.latency_ms.p95}/${r.aggregate.latency_ms.p100}ms`))'
+
 test: ## Run the test suite
 	$(PY) -m pytest -q
 
