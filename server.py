@@ -55,6 +55,12 @@ def run_async(coro):
     return asyncio.run_coroutine_threadsafe(coro, _loop).result()
 
 
+# Count in-flight /ask and /sweep requests so the file-watcher can hold a
+# restart until they finish — otherwise auto-reload drops a long run mid-flight.
+_inflight = 0
+_inflight_lock = threading.Lock()
+
+
 def _cost(in_tok, out_tok):
     return in_tok / 1e6 * PRICE_IN_PER_M + out_tok / 1e6 * PRICE_OUT_PER_M
 
@@ -698,11 +704,19 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self):
+        global _inflight
         try:
-            if self.path == "/ask":
-                self._handle_ask(self._read_json())
-            elif self.path == "/sweep":
-                self._handle_sweep(self._read_json())
+            if self.path in ("/ask", "/sweep"):
+                with _inflight_lock:
+                    _inflight += 1
+                try:
+                    if self.path == "/ask":
+                        self._handle_ask(self._read_json())
+                    else:
+                        self._handle_sweep(self._read_json())
+                finally:
+                    with _inflight_lock:
+                        _inflight -= 1
             else:
                 self._send(404, json.dumps({"error": "not found"}))
         except Exception as e:
@@ -787,15 +801,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def _watch_and_restart(poll=1.0):
-    """Dev auto-reload with no extra deps: poll the mtimes of our source files
-    and re-exec the whole process when one changes. ThreadingHTTPServer sets
-    allow_reuse_address, so the port is free immediately on restart. In-flight
-    requests are dropped — fine for a hand-driven probe. Disable with
-    GEMINI_WATCH=0."""
+    """Dev auto-reload with no extra deps: poll source-file mtimes and re-exec
+    when one changes. The restart is DEFERRED until no /ask or /sweep request is
+    in flight, so auto-reload never drops a long run (e.g. a big N sweep).
+    ThreadingHTTPServer sets allow_reuse_address, so the port frees immediately.
+    Disable with GEMINI_WATCH=0."""
     src = lambda: [__file__] + glob.glob(
         os.path.join(os.path.dirname(__file__) or ".", "llm", "*.py")
     )
     seen = {f: os.path.getmtime(f) for f in src() if os.path.exists(f)}
+    pending = False
     while True:
         time.sleep(poll)
         for f in src():
@@ -804,8 +819,19 @@ def _watch_and_restart(poll=1.0):
             except OSError:
                 continue
             if seen.get(f) != m:
-                print(f"\n{os.path.relpath(f)} changed — restarting", flush=True)
-                os.execv(sys.executable, [sys.executable] + sys.argv)
+                seen[f] = m
+                if not pending:
+                    print(
+                        f"\n{os.path.relpath(f)} changed — restart pending", flush=True
+                    )
+                pending = True
+        if pending:
+            with _inflight_lock:
+                busy = _inflight
+            if busy:
+                continue  # a run is in flight; wait for it to finish first
+            print("restarting", flush=True)
+            os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 if __name__ == "__main__":
