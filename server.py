@@ -417,6 +417,7 @@ const $ = id => document.getElementById(id);
 const usd = (n, p = 2) => '$' + (n < 0.01 ? n.toPrecision(p) : n.toFixed(p));
 const esc = s => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
 const secs = ms => (ms / 1000).toFixed(1) + ' s';
+const secD = v => (v == null ? '–' : secs(v));  // null-safe, for table cells
 
 async function ask() {
   $('go').disabled = true;
@@ -453,15 +454,15 @@ function render(d) {
   const u = d.usage, c = d.cost, l = d.latency_ms;
   $('t-wall').textContent = secs(d.wall_ms);
   $('t-rps').textContent = d.throughput_rps + ' rps';
-  $('t-lat').textContent = l.p50 + '/' + l.p95 + '/' + l.p100 + ' ms';
+  $('t-lat').textContent = secs(l.p50) + ' / ' + secs(l.p95) + ' / ' + secs(l.p100);
   $('t-cost').textContent = usd(c.total, 2);
   $('t-uniq').textContent = d.distinct.length + ' / ' + d.ok;
   $('d-p').textContent = d.parallelism;
   $('d-ok').textContent = d.ok + ' / ' + d.requested;
   $('d-err').textContent = d.error_count;
   $('d-skip').textContent = d.skipped;
-  $('d-p99').textContent = l.p99 + ' ms';
-  $('d-queue').textContent = d.queue_ms.p50 + ' / ' + d.queue_ms.p100 + ' ms';
+  $('d-p99').textContent = secs(l.p99);
+  $('d-queue').textContent = secs(d.queue_ms.p50) + ' / ' + secs(d.queue_ms.p100);
   $('d-think').textContent = u.reasoning.toLocaleString();
   $('d-grounded').textContent = d.grounded ? 'yes' : 'no';
   $('d-logprob').textContent = d.avg_logprob === null ? '–' : d.avg_logprob.toFixed(3);
@@ -547,8 +548,8 @@ function renderSweep(d) {
       '<td>' + s.ok + ' / ' + s.error_count + '</td>' +
       '<td>' + s.skipped + '</td>' +
       '<td><b>' + s.throughput_rps + '</b></td>' +
-      '<td>' + l.p50 + '</td><td>' + l.p95 + '</td><td>' + l.p100 + '</td>' +
-      '<td>' + s.queue_ms.p100 + '</td>' +
+      '<td>' + secs(l.p50) + '</td><td>' + secs(l.p95) + '</td><td>' + secs(l.p100) + '</td>' +
+      '<td>' + secs(s.queue_ms.p100) + '</td>' +
       '<td>' + s.usage.reasoning.toLocaleString() + '</td>' +
       '<td>' + usd(s.cost.total, 3) + '</td></tr>';
   }).join('');
@@ -570,7 +571,6 @@ async function loadRuns() {
       return;
     }
     $('runsempty').textContent = '';
-    const num = v => (v == null ? '–' : v.toLocaleString());
     const head = ['when', 'type', 'question', 'N', 'P', 'temp', 'web',
                   'ok/err', 'rps', 'p50', 'p95', 'p100', 'wall', 'cost']
       .map(h => '<th>' + h + '</th>').join('');
@@ -589,9 +589,9 @@ async function loadRuns() {
         '<td>' + (x.web ? 'yes' : '–') + '</td>' +
         '<td>' + okerr + '</td>' +
         '<td>' + (x.throughput_rps ?? '–') + '</td>' +
-        '<td>' + num(x.p50) + '</td>' +
-        '<td>' + num(x.p95) + '</td>' +
-        '<td>' + num(x.p100) + '</td>' +
+        '<td>' + secD(x.p50) + '</td>' +
+        '<td>' + secD(x.p95) + '</td>' +
+        '<td>' + secD(x.p100) + '</td>' +
         '<td>' + wall + '</td>' +
         '<td>' + (x.cost != null ? usd(x.cost, 3) : '–') + '</td></tr>';
     }).join('');
