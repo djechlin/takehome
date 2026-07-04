@@ -3,3 +3,4 @@ google-genai==1.47.0
 together==2.12.0
 pymongo==4.17.0
 playwright==1.61.0  # UI screenshot test; also run: playwright install chromium
+black==26.5.1       # `make fmt` (runs automatically before make run/serve)

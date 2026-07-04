@@ -10,12 +10,14 @@ VENV    := .venv
 PY      := $(VENV)/bin/python
 PIP     := $(VENV)/bin/pip
 
+FMT_PATHS := llm server.py scripts
+
 # Every target that touches the app gets project/location in its environment.
 export GOOGLE_CLOUD_PROJECT  = $(PROJECT)
 export GOOGLE_CLOUD_LOCATION = $(LOCATION)
 
 .DEFAULT_GOAL := help
-.PHONY: help setup run serve stop smoke test auth doctor clean
+.PHONY: help setup fmt run serve stop smoke probe shot runs test auth doctor clean
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -27,10 +29,13 @@ setup: ## Create the venv (3.12) and install requirements
 	$(PIP) install --quiet -r requirements.txt
 	@echo "venv ready: $$($(PY) --version)"
 
-run: ## Run the web app in the foreground (Ctrl-C to stop)
+fmt: ## Format code with black (also fails fast on syntax errors)
+	$(PY) -m black $(FMT_PATHS)
+
+run: fmt ## Format, then run the web app in the foreground (Ctrl-C to stop)
 	$(PY) server.py
 
-serve: ## Start the web app in the background (writes server.log)
+serve: fmt ## Format, then start the web app in the background (writes server.log)
 	@$(PY) server.py > server.log 2>&1 & echo "serving http://localhost:$(PORT) (pid $$!) -> server.log"
 
 stop: ## Stop the background web app
