@@ -213,6 +213,11 @@ PAGE = """<!doctype html>
   .check input { width: auto; }
   .check label { margin: 0; }
   .hint { color: #aaa; font-size: 11px; margin-top: 4px; }
+  .intro { color: #555; font-size: 13px; margin: 4px 0 8px; }
+  .intro b { color: #1a1a1a; }
+  .caption { color: #888; font-size: 11px; margin-top: 6px; line-height: 1.5; }
+  .caption b { color: #555; }
+  abbr { text-decoration: none; border-bottom: 1px dotted #bbb; cursor: help; }
   button { margin-top: 16px; padding: 9px 18px; font: inherit; font-weight: 600;
            border: 0; border-radius: 6px; background: #1a1a1a; color: #fff; cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
@@ -243,6 +248,12 @@ PAGE = """<!doctype html>
 </head>
 <body>
   <h1>Gemini 2.5 Flash (Vertex) — load-test console</h1>
+  <p class="intro">
+    Fires the <b>same query N times</b> at Gemini on Vertex, running at most
+    <b>P at once</b> (a queue you widen to find where Vertex starts to degrade).
+    Reports latency percentiles, throughput, cost, and which distinct answers
+    came back. Each run is capped at <b>$10</b> of spend and saved to MongoDB.
+  </p>
   <label>System prompt</label>
   <input id="sys" value="You are a helpful assistant.">
   <label>Question</label>
@@ -252,32 +263,32 @@ PAGE = """<!doctype html>
     <div>
       <label>N — total requests</label>
       <input id="n" type="number" step="1" min="1" value="50">
-      <div class="hint">same query, N times</div>
+      <div class="hint">how many times to run the query</div>
     </div>
     <div>
       <label>P — parallelism</label>
       <input id="p" type="number" step="1" min="1" value="10">
-      <div class="hint">max in flight; sweep to find degrade</div>
+      <div class="hint">max requests in flight at once</div>
     </div>
     <div>
       <label>Temperature</label>
       <input id="temp" type="number" step="0.1" min="0" max="2" value="1.0">
-      <div class="hint">~1.0 = real app &amp; tail recall</div>
+      <div class="hint">higher = more varied answers</div>
     </div>
     <div>
       <label>Thinking budget</label>
       <input id="think" type="number" step="1" min="-1" value="-1">
-      <div class="hint">-1 dyn · 0 off · N cap</div>
+      <div class="hint">reasoning tokens: -1 auto · 0 off · N cap</div>
     </div>
   </div>
   <div class="row">
     <div class="check">
       <input id="web" type="checkbox">
-      <label for="web">Enable web (Google Search grounding)</label>
+      <label for="web" title="Attaches Google Search. Switches from the model's built-in knowledge to the live-retrieval path real chat apps use.">Enable web (Google Search grounding)</label>
     </div>
     <div class="check">
       <input id="lp" type="checkbox">
-      <label for="lp">Request logprobs (top-5)</label>
+      <label for="lp" title="Ask Vertex to return token log-probabilities. Support is model-dependent; if unsupported you'll see the error rather than a silent skip.">Request logprobs (top-5)</label>
     </div>
   </div>
 
@@ -285,27 +296,34 @@ PAGE = """<!doctype html>
 
   <div id="panel">
     <div class="tiles">
-      <div class="tile"><div class="n" id="t-wall">–</div><div class="k">wall time</div></div>
-      <div class="tile"><div class="n" id="t-rps">–</div><div class="k">throughput</div></div>
-      <div class="tile"><div class="n" id="t-lat">–</div><div class="k">latency p50/p95/p100</div></div>
-      <div class="tile"><div class="n" id="t-cost">–</div><div class="k">cost</div></div>
-      <div class="tile"><div class="n" id="t-uniq">–</div><div class="k">distinct / ok</div></div>
+      <div class="tile" title="Total time to finish all N requests at parallelism P."><div class="n" id="t-wall">–</div><div class="k">wall time</div></div>
+      <div class="tile" title="Successful requests per second = ok / wall time. Watch this plateau as P rises."><div class="n" id="t-rps">–</div><div class="k">throughput</div></div>
+      <div class="tile" title="Per-request time from acquiring a slot to the response (excludes queue wait). p100 = slowest request. Rising tail is the degrade signal."><div class="n" id="t-lat">–</div><div class="k">latency p50/p95/p100</div></div>
+      <div class="tile" title="Total spend for this run, across all successful requests."><div class="n" id="t-cost">–</div><div class="k">cost</div></div>
+      <div class="tile" title="Unique answers among successful requests. Same query N times, so more distinct = wider spread of what the model names."><div class="n" id="t-uniq">–</div><div class="k">distinct / ok</div></div>
     </div>
     <div class="detail">
-      <span>P <b id="d-p">–</b></span>
-      <span>ok <b id="d-ok">–</b></span>
-      <span>errors <b id="d-err">–</b></span>
-      <span>skipped <b id="d-skip">–</b></span>
-      <span>lat p99 <b id="d-p99">–</b></span>
-      <span>queue p50/max <b id="d-queue">–</b></span>
-      <span>thinking <b id="d-think">–</b></span>
-      <span>grounded <b id="d-grounded">–</b></span>
-      <span>avg logprob <b id="d-logprob">–</b></span>
-      <span>$/1k req <b id="d-per1k">–</b></span>
+      <span title="Parallelism actually used for this run.">P <b id="d-p">–</b></span>
+      <span title="Successful requests out of requested.">ok <b id="d-ok">–</b></span>
+      <span title="Requests that returned an error (e.g. 429 rate limit).">errors <b id="d-err">–</b></span>
+      <span title="Requests never sent because the $10 cap was hit first.">skipped <b id="d-skip">–</b></span>
+      <span title="99th-percentile latency.">lat p99 <b id="d-p99">–</b></span>
+      <span title="Time requests spent waiting for a free slot (p50 / max). High values mean P is the bottleneck, not the model.">queue p50/max <b id="d-queue">–</b></span>
+      <span title="Total hidden reasoning tokens spent before answers.">thinking <b id="d-think">–</b></span>
+      <span title="Whether any request actually used web search.">grounded <b id="d-grounded">–</b></span>
+      <span title="Mean log-probability of chosen tokens, if logprobs were returned.">avg logprob <b id="d-logprob">–</b></span>
+      <span title="Projected cost to run this query 1,000 times.">$/1k req <b id="d-per1k">–</b></span>
     </div>
+    <p class="caption">
+      <b>Latency</b> is model+network time per request; <b>queue</b> is time spent
+      waiting for one of the P slots. To find the degrade point, raise P and watch
+      p95/p100 climb, throughput flatten, or errors appear.
+    </p>
     <div id="banner"></div>
     <div class="distinct">
       <h3>Distinct answers (recall)</h3>
+      <p class="caption">The same query ran N times — these are the unique responses
+        and how often each came back. Wider spread = the model draws from more options.</p>
       <div id="distinct"></div>
     </div>
     <div class="meta" id="meta"></div>
@@ -389,7 +407,9 @@ function render(d) {
     '/1M out (approx) · ' + usd(c.per_request, 4) + '/request</div>';
   $('meta').innerHTML = meta;
 
-  $('runid').textContent = d.run_id ? ('saved run ' + d.run_id) : ('not saved: ' + (d.persist_error || '?'));
+  $('runid').textContent = d.run_id
+    ? ('saved to MongoDB evertune_loadtest.run · _id ' + d.run_id + '  (compare runs with `make runs`)')
+    : ('not saved to MongoDB: ' + (d.persist_error || '?'));
   $('panel').className = 'show';
 }
 </script>
