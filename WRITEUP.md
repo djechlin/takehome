@@ -47,7 +47,7 @@ I confirmed the DSQ model by reading the actual project quota rather than guessi
 | gemini-2.5-flash-*-tts | 150 | — | — |
 | gemini-1.5-flash | 200 | 4,000,000 | fixed |
 
-**The unit mismatch here is the point, not a contradiction.** The Service Usage API only exposes the *legacy* per-minute quota metrics — requests/min and tokens/min. DSQ doesn't govern on those; it governs on the tokens-per-*second* shared-pool threshold described above, which this API doesn't surface at all. So for a DSQ model the legacy per-minute buckets go vestigial: they read either `−1` (no legacy cap) or a stale default like the "5 requests/min" — which is a red herring, since 5/min would make the model unusable and it plainly isn't. Contrast `gemini-1.5-flash`, which predates DSQ and still carries *real* fixed per-minute quotas (200 RPM, 4M input TPM) — that's what a genuinely governed metric looks like. In short: the table shows the **absence** of a per-minute limit; the actual governor is the TPS threshold, measured in different units and not reported here.
+**The unit mismatch here is the point, not a contradiction.** The Service Usage API only exposes the *legacy* per-minute quota metrics — requests/min and tokens/min. DSQ doesn't govern on those; it governs on the tokens-per-*second* shared-pool threshold described above, which this API doesn't surface at all.
 
 I checked empirically too: a burst of **N=20 at P=10 returned 20/20 with zero 429s** (p50 2.9 s, p95 7.4 s, ~$0.0012/request). So at small concurrency there's comfortable headroom — the DSQ fast lane is real.
 
