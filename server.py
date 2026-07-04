@@ -13,6 +13,7 @@ saved in full to a local MongoDB (`evertune_loadtest.run`).
 
 Run:  python3 server.py     ->  http://localhost:4454
 """
+
 import asyncio
 import glob
 import hashlib
@@ -200,13 +201,17 @@ def aggregate(records, wall_ms, p, capped):
         "search_queries": queries,
         "avg_logprob": (sum(logprobs) / len(logprobs)) if logprobs else None,
         "latency_ms": {
-            "p50": _pct(service, 50), "p95": _pct(service, 95),
-            "p99": _pct(service, 99), "p100": service[-1] if service else 0,
+            "p50": _pct(service, 50),
+            "p95": _pct(service, 95),
+            "p99": _pct(service, 99),
+            "p100": service[-1] if service else 0,
         },
         "queue_ms": {"p50": _pct(waits, 50), "p100": waits[-1] if waits else 0},
         "usage": {
-            "input": in_tok, "reasoning": reasoning,
-            "answer": out_tok - reasoning, "output": out_tok,
+            "input": in_tok,
+            "reasoning": reasoning,
+            "answer": out_tok - reasoning,
+            "output": out_tok,
             "total": in_tok + out_tok,
         },
         "cost": {
@@ -720,7 +725,10 @@ class Handler(BaseHTTPRequestHandler):
             "type": "run",
             "config": {
                 "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
-                "n": n, "p": p, **params, "cost_cap": MAX_RUN_COST,
+                "n": n,
+                "p": p,
+                **params,
+                "cost_cap": MAX_RUN_COST,
             },
             "aggregate": {k: v for k, v in agg.items() if k != "distinct"},
             "distinct": slim_distinct,
@@ -749,8 +757,11 @@ class Handler(BaseHTTPRequestHandler):
         steps, spent = run_async(run_sweep(params, n, p_list, MAX_RUN_COST))
         best_rps = max((s.get("throughput_rps", 0) for s in steps), default=0)
         result = {
-            "steps": steps, "n": n, "p_list": p_list,
-            "total_cost": spent, "cost_cap": MAX_RUN_COST,
+            "steps": steps,
+            "n": n,
+            "p_list": p_list,
+            "total_cost": spent,
+            "cost_cap": MAX_RUN_COST,
         }
 
         doc = {
@@ -758,7 +769,10 @@ class Handler(BaseHTTPRequestHandler):
             "type": "sweep",
             "config": {
                 "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
-                "n": n, "p_list": p_list, **params, "cost_cap": MAX_RUN_COST,
+                "n": n,
+                "p_list": p_list,
+                **params,
+                "cost_cap": MAX_RUN_COST,
             },
             "summary": {"total_cost": spent, "best_rps": best_rps},
             "steps": steps,
@@ -778,7 +792,9 @@ def _watch_and_restart(poll=1.0):
     allow_reuse_address, so the port is free immediately on restart. In-flight
     requests are dropped — fine for a hand-driven probe. Disable with
     GEMINI_WATCH=0."""
-    src = lambda: [__file__] + glob.glob(os.path.join(os.path.dirname(__file__) or ".", "llm", "*.py"))
+    src = lambda: [__file__] + glob.glob(
+        os.path.join(os.path.dirname(__file__) or ".", "llm", "*.py")
+    )
     seen = {f: os.path.getmtime(f) for f in src() if os.path.exists(f)}
     while True:
         time.sleep(poll)
@@ -794,8 +810,10 @@ def _watch_and_restart(poll=1.0):
 
 if __name__ == "__main__":
     watch = os.getenv("GEMINI_WATCH", "1") != "0"
-    print(f"Gemini load-test console on http://localhost:{PORT}"
-          f"{' (watching)' if watch else ''}")
+    print(
+        f"Gemini load-test console on http://localhost:{PORT}"
+        f"{' (watching)' if watch else ''}"
+    )
     if watch:
         threading.Thread(target=_watch_and_restart, daemon=True).start()
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

@@ -6,6 +6,7 @@
 
 Run:  .venv/bin/python scripts/probe_thinking_budget.py
 """
+
 import asyncio
 import os
 import time
@@ -29,7 +30,11 @@ async def ask(client, budget):
         ),
     )
     u = r.usage_metadata
-    return time.time() - start, (u.thoughts_token_count or 0), (u.candidates_token_count or 0)
+    return (
+        time.time() - start,
+        (u.thoughts_token_count or 0),
+        (u.candidates_token_count or 0),
+    )
 
 
 async def main():

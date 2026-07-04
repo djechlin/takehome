@@ -8,6 +8,7 @@ Reads the Service Usage consumer-quota API with your gcloud credentials.
     GOOGLE_CLOUD_PROJECT=evertune-tests .venv/bin/python scripts/quota_report.py
     # optional: MODEL=gemini-2.5-flash REGION=us-central1
 """
+
 import json
 import os
 import subprocess
@@ -24,11 +25,17 @@ METRICS = {
 }
 
 BASE = "https://serviceusage.googleapis.com/v1beta1"
-URL = f"{BASE}/projects/{PROJECT}/services/aiplatform.googleapis.com/consumerQuotaMetrics"
+URL = (
+    f"{BASE}/projects/{PROJECT}/services/aiplatform.googleapis.com/consumerQuotaMetrics"
+)
 
 
 def token():
-    return subprocess.check_output(["gcloud", "auth", "print-access-token"]).decode().strip()
+    return (
+        subprocess.check_output(["gcloud", "auth", "print-access-token"])
+        .decode()
+        .strip()
+    )
 
 
 def fetch_metrics(tok):

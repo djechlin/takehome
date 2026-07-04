@@ -5,6 +5,7 @@ candidates_token_count (what our provider currently reports).
 
 Run:  make probe   (or)   .venv/bin/python scripts/probe_thinking.py
 """
+
 import asyncio
 import os
 import time
@@ -25,7 +26,9 @@ PROMPTS = [
 
 async def main():
     client = genai.Client(vertexai=True, project=PROJECT, location=LOCATION)
-    print(f"{'latency':>9}  {'prompt':>7}  {'thoughts':>8}  {'answer':>6}  {'total':>6}")
+    print(
+        f"{'latency':>9}  {'prompt':>7}  {'thoughts':>8}  {'answer':>6}  {'total':>6}"
+    )
     for p in PROMPTS:
         start = time.time()
         r = await client.aio.models.generate_content(
@@ -35,10 +38,12 @@ async def main():
         )
         dt = time.time() - start
         u = r.usage_metadata
-        print(f"{dt:8.2f}s  {u.prompt_token_count:>7}  "
-              f"{(u.thoughts_token_count or 0):>8}  "
-              f"{(u.candidates_token_count or 0):>6}  "
-              f"{u.total_token_count:>6}   | {p[:40]}")
+        print(
+            f"{dt:8.2f}s  {u.prompt_token_count:>7}  "
+            f"{(u.thoughts_token_count or 0):>8}  "
+            f"{(u.candidates_token_count or 0):>6}  "
+            f"{u.total_token_count:>6}   | {p[:40]}"
+        )
 
 
 if __name__ == "__main__":

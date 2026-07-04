@@ -1,8 +1,12 @@
 import os
 from together import AsyncTogether
-from together.types.chat.completion_create_params import MessageChatCompletionUserMessageParam, MessageChatCompletionSystemMessageParam
+from together.types.chat.completion_create_params import (
+    MessageChatCompletionUserMessageParam,
+    MessageChatCompletionSystemMessageParam,
+)
 
 from llm import LLM
+
 
 class Together(LLM):
     def __init__(self):
@@ -12,12 +16,16 @@ class Together(LLM):
     def parallelism(self):
         return 100
 
-    async def ask_generic_question(self, system_prompt: str, question: str, temperature: float) -> LLM.SimpleResponse:
+    async def ask_generic_question(
+        self, system_prompt: str, question: str, temperature: float
+    ) -> LLM.SimpleResponse:
         response = await self.__client.chat.completions.create(
             model=self.__model,
             messages=[
                 MessageChatCompletionUserMessageParam(role="user", content=question),
-                MessageChatCompletionSystemMessageParam(role="system", content=system_prompt),
+                MessageChatCompletionSystemMessageParam(
+                    role="system", content=system_prompt
+                ),
             ],
             logprobs=1,
             temperature=temperature,

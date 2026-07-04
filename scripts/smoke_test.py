@@ -2,6 +2,7 @@
 
 Run:  GOOGLE_CLOUD_PROJECT=evertune-tests python3 scripts/smoke_test.py
 """
+
 import asyncio
 import os
 
@@ -23,9 +24,11 @@ async def main():
         ),
     )
     print("answer:", repr(resp.text))
-    print("tokens in/out:",
-          resp.usage_metadata.prompt_token_count,
-          resp.usage_metadata.candidates_token_count)
+    print(
+        "tokens in/out:",
+        resp.usage_metadata.prompt_token_count,
+        resp.usage_metadata.candidates_token_count,
+    )
 
 
 if __name__ == "__main__":

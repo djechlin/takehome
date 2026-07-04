@@ -69,9 +69,7 @@ class Gemini(LLM):
                 thinking_budget=thinking_budget
             )
         if enable_web:
-            config_kwargs["tools"] = [
-                types.Tool(google_search=types.GoogleSearch())
-            ]
+            config_kwargs["tools"] = [types.Tool(google_search=types.GoogleSearch())]
         if logprobs is not None:
             config_kwargs["response_logprobs"] = True
             config_kwargs["logprobs"] = logprobs
@@ -90,7 +88,9 @@ class Gemini(LLM):
         reasoning_tokens = usage.thoughts_token_count or 0
         output_tokens = (usage.candidates_token_count or 0) + reasoning_tokens
 
-        grounded, sources, search_queries, avg_logprob = self.__extract_metadata(response)
+        grounded, sources, search_queries, avg_logprob = self.__extract_metadata(
+            response
+        )
 
         return LLM.SimpleResponse(
             answer=response.text,
