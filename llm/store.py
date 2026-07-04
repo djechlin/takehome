@@ -69,6 +69,7 @@ def recent_runs(limit=20):
             "web": bool(cfg.get("enable_web")),
             "ok": agg.get("ok"),
             "errors": agg.get("error_count"),
+            "distinct_count": agg.get("distinct_count"),
             "throughput_rps": agg.get("throughput_rps") or summ.get("best_rps"),
             "p50": lat.get("p50"),
             "p95": lat.get("p95"),

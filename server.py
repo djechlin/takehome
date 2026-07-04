@@ -195,6 +195,7 @@ def aggregate(records, wall_ms, p, capped):
         "throughput_rps": round(throughput, 2),
         "grounded": any(r["grounded"] for r in ok),
         "distinct": distinct,
+        "distinct_count": len(distinct),  # unique answers (grouped by hash)
         "sources": sources,
         "search_queries": queries,
         "avg_logprob": (sum(logprobs) / len(logprobs)) if logprobs else None,
@@ -606,7 +607,7 @@ async function loadRuns() {
     }
     $('runsempty').textContent = '';
     const head = ['when', 'type', 'question', 'N', 'P', 'temp', 'web',
-                  'ok/err', 'rps', 'p50', 'p95', 'p100', 'wall', 'cost']
+                  'ok/err', 'distinct', 'rps', 'p50', 'p95', 'p100', 'wall', 'cost']
       .map(h => '<th>' + h + '</th>').join('');
     const body = rows.map(x => {
       const when = x.created_at ? x.created_at.replace('T', ' ').slice(5, 16) : '–';
@@ -622,6 +623,7 @@ async function loadRuns() {
         '<td>' + (x.temperature ?? '–') + '</td>' +
         '<td>' + (x.web ? 'yes' : '–') + '</td>' +
         '<td>' + okerr + '</td>' +
+        '<td>' + (x.distinct_count ?? '–') + '</td>' +
         '<td>' + (x.throughput_rps ?? '–') + '</td>' +
         '<td>' + secD(x.p50) + '</td>' +
         '<td>' + secD(x.p95) + '</td>' +

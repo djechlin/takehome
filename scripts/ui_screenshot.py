@@ -75,8 +75,9 @@ def seed_runs():
     _collection().insert_many([
         {"created_at": now, "type": "run", MARK: True,
          "config": {"n": 100, "p": 25, "question": "What are the best running shoe brands?"},
-         "aggregate": {"throughput_rps": 11.67, "error_count": 2,
-                       "latency_ms": {"p95": 3400}, "cost": {"total": 0.0241}}},
+         "aggregate": {"throughput_rps": 11.67, "ok": 98, "error_count": 2,
+                       "distinct_count": 83, "latency_ms": {"p95": 3400},
+                       "cost": {"total": 0.0241}}},
         {"created_at": now, "type": "sweep", MARK: True,
          "config": {"n": 20, "p_list": [1, 5, 10, 25, 50],
                     "question": "What are the best running shoe brands?"},
