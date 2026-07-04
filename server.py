@@ -200,6 +200,10 @@ def aggregate(records, wall_ms, p, capped):
         "capped": capped,
         "wall_ms": wall_ms,
         "throughput_rps": round(throughput, 2),
+        # Total tokens (in+out) over wall time — the DSQ-relevant throughput.
+        "tokens_per_min": (
+            round((in_tok + out_tok) / (wall_ms / 60000)) if wall_ms else 0
+        ),
         "grounded": any(r["grounded"] for r in ok),
         "distinct": distinct,
         "distinct_count": len(distinct),  # unique answers (grouped by hash)
@@ -618,12 +622,15 @@ async function loadRuns() {
     }
     $('runsempty').textContent = '';
     const head = ['when', 'question', 'N', 'P', 'temp', 'web',
-                  'ok/err', 'distinct', 'rps', 'p50', 'in tok', 'out tok', 'cost']
+                  'ok/err', 'distinct', 'rps', 'p50', 'in tok', 'out tok', 'tok/min', 'cost']
       .map(h => '<th>' + h + '</th>').join('');
-    const tok = v => (v == null ? '–' : v.toLocaleString());
+    const tok = v => (v == null ? '–'
+      : v < 1000 ? v.toLocaleString()
+      : Math.round(v / 1000).toLocaleString() + 'K');
     const body = rows.map(x => {
-      const when = x.created_at
-        ? new Date(x.created_at).toLocaleString([],
+      const start = x.started_at || x.created_at;
+      const when = start
+        ? new Date(start).toLocaleString([],
             {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'})
         : '–';
       const p = Array.isArray(x.p) ? x.p.join('/') : (x.p ?? '–');
@@ -641,6 +648,7 @@ async function loadRuns() {
         '<td>' + secD(x.p50) + '</td>' +
         '<td>' + tok(x.in_tok) + '</td>' +
         '<td>' + tok(x.out_tok) + '</td>' +
+        '<td>' + tok(x.tokens_per_min) + '</td>' +
         '<td>' + (x.cost != null ? '$' + x.cost.toFixed(2) : '–') + '</td></tr>';
     }).join('');
     $('runstable').innerHTML = '<tr>' + head + '</tr>' + body;
@@ -728,7 +736,9 @@ class Handler(BaseHTTPRequestHandler):
         p = max(1, min(MAX_PARALLELISM, int(req.get("p", llm.parallelism()))))
         params = self._params(req)
 
+        started = datetime.now(timezone.utc)
         records, wall_ms, capped = run_async(run_batch(params, n, p, MAX_RUN_COST))
+        ended = datetime.now(timezone.utc)
         agg = aggregate(records, wall_ms, p, capped)
         agg["cost_cap"] = MAX_RUN_COST
 
@@ -736,7 +746,9 @@ class Handler(BaseHTTPRequestHandler):
         # stored as preview+hash, not full text, to stay under Mongo's 16MB cap.
         slim_records, slim_distinct = compact_for_storage(records, agg["distinct"])
         doc = {
-            "created_at": datetime.now(timezone.utc),
+            "created_at": ended,
+            "started_at": started,
+            "ended_at": ended,
             "type": "run",
             "config": {
                 "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
@@ -769,7 +781,9 @@ class Handler(BaseHTTPRequestHandler):
         p_list = p_list or [llm.parallelism()]
         params = self._params(req)
 
+        started = datetime.now(timezone.utc)
         steps, spent = run_async(run_sweep(params, n, p_list, MAX_RUN_COST))
+        ended = datetime.now(timezone.utc)
         best_rps = max((s.get("throughput_rps", 0) for s in steps), default=0)
         result = {
             "steps": steps,
@@ -780,7 +794,9 @@ class Handler(BaseHTTPRequestHandler):
         }
 
         doc = {
-            "created_at": datetime.now(timezone.utc),
+            "created_at": ended,
+            "started_at": started,
+            "ended_at": ended,
             "type": "sweep",
             "config": {
                 "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),

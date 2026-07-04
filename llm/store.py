@@ -48,7 +48,16 @@ def recent_runs(limit=20):
     cur = (
         _collection()
         .find(
-            {}, {"created_at": 1, "type": 1, "config": 1, "aggregate": 1, "summary": 1}
+            {},
+            {
+                "created_at": 1,
+                "started_at": 1,
+                "ended_at": 1,
+                "type": 1,
+                "config": 1,
+                "aggregate": 1,
+                "summary": 1,
+            },
         )
         .sort("created_at", -1)
         .limit(limit)
@@ -67,6 +76,11 @@ def recent_runs(limit=20):
                 "created_at": (
                     d["created_at"].isoformat() if d.get("created_at") else None
                 ),
+                "started_at": (
+                    d["started_at"].isoformat() if d.get("started_at") else None
+                ),
+                "ended_at": (d["ended_at"].isoformat() if d.get("ended_at") else None),
+                "tokens_per_min": agg.get("tokens_per_min"),
                 "type": d.get("type", "run"),
                 "model": cfg.get("model"),
                 "question": (cfg.get("question") or "")[:70],
