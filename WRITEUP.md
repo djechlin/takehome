@@ -28,28 +28,18 @@ I dumped results to MongoDB which is a good database for early logs exploration.
 
 # VertexAI limits (quota & DSQ)
 
-VertexAI serves 2.5-flash under **DSQ (Dynamic Shared Quota)**: instead of a fixed per-project QPM/TPM you request and manage, all pay-as-you-go traffic for the model draws from one large **shared pool of serving capacity per region**, allocated in real time based on total supply and total demand across *all* customers of that model. Few customers active → you can burst high; many active → your share shrinks. There's no per-project number to stay under, which is why the quota read below shows `−1`.
+VertexAI serves 2.5-flash under **DSQ (Dynamic Shared Quota)**: instead of a fixed per-project QPM/TPM you request and manage, all pay-as-you-go traffic for the model draws from one large **shared pool of serving capacity per region**, allocated in real time based on total supply and total demand across *all* customers of that model. Few customers active → you can burst high; many active → your share shrinks. There's no per-project number to stay under.
 
 ## How DSQ works (the two lanes)
 
-It's not "unlimited until it randomly breaks." Your org has a default **tokens-per-second (TPS) threshold** — note this is a *token* rate, and per *second*, not the requests-per-minute the legacy quota table below reports — that splits traffic into two priority lanes:
+It's not "unlimited until it randomly breaks." Your org has a default **tokens-per-second (TPS) threshold** that splits traffic into two priority lanes:
 
 1. **Within threshold → high priority, ~99.5% SLO.** This is the "good SLA" fast lane.
 2. **Above threshold → low priority, best-effort.** Excess requests get throughput only when the shared pool has spare capacity, and otherwise come back as **429 `RESOURCE_EXHAUSTED`**. This is the "shaky SLA" slow lane, and where load-shedding happens under contention.
 
 So the knobs that matter are: stay under the TPS threshold to keep the 99.5% lane, and treat the 429 rate above it as a load-dependent (not fixed) signal. **Provisioned Throughput** is the escape hatch — reserve GSUs (Generative AI Scale Units) for a guaranteed `GSUs × throughput/GSU` ceiling served from dedicated capacity, isolated from the shared pool. Fixed quota = a reserved parking space; DSQ = a big shared lot; PT = a rented private garage. ([DSQ docs](https://cloud.google.com/vertex-ai/generative-ai/docs/resources/dynamic-shared-quota), [PT docs](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/use-provisioned-throughput))
 
-I confirmed the DSQ model by reading the actual project quota rather than guessing (`scripts/quota_report.py` hits the Service Usage consumer-quota API). For `gemini-2.5-flash` in `us-central1` on `evertune-tests`:
-
-| base_model | requests/min | input TPM | output TPM |
-|---|---|---|---|
-| **gemini-2.5-flash** (ours) | default → **5** | **−1** (no cap) | **−1** (no cap) |
-| gemini-2.5-flash-*-tts | 150 | — | — |
-| gemini-1.5-flash | 200 | 4,000,000 | fixed |
-
-These requests/min and tokens/min figures are the *legacy* per-minute quota metrics — the only thing the Service Usage API exposes. DSQ doesn't govern on them; it governs on the shared-pool tokens-per-second threshold described above, which this API doesn't report. So the `−1`s aren't a limit of any kind — they're the API telling us this model isn't governed the old way.
-
-I checked empirically too: a burst of **N=20 at P=10 returned 20/20 with zero 429s** (p50 2.9 s, p95 7.4 s, ~$0.0012/request). So at small concurrency there's comfortable headroom — the DSQ fast lane is real.
+The project's quota API shows no fixed limit set for 2.5-flash (`scripts/quota_report.py`), consistent with DSQ. Empirically, a burst of **N=20 at P=10 returned 20/20 with zero 429s** (p50 2.9 s, p95 7.4 s, ~$0.0012/request) — comfortable headroom in the fast lane at small concurrency.
 
 ## Why this is hard to test
 
