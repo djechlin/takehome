@@ -39,3 +39,40 @@ def try_save_run(doc):
         return save_run(doc), None
     except PyMongoError as e:
         return None, f"{type(e).__name__}: {e}"
+
+
+def recent_runs(limit=20):
+    """Return compact summaries of the most recent runs/sweeps, newest first,
+    JSON-serializable (ObjectId and datetime stringified)."""
+    cur = (
+        _collection()
+        .find({}, {"created_at": 1, "type": 1, "config": 1, "aggregate": 1, "summary": 1})
+        .sort("created_at", -1)
+        .limit(limit)
+    )
+    out = []
+    for d in cur:
+        cfg = d.get("config") or {}
+        agg = d.get("aggregate") or {}
+        summ = d.get("summary") or {}
+        out.append({
+            "id": str(d["_id"]),
+            "created_at": d["created_at"].isoformat() if d.get("created_at") else None,
+            "type": d.get("type", "run"),
+            "question": (cfg.get("question") or "")[:60],
+            "n": cfg.get("n"),
+            "p": cfg.get("p") if d.get("type") != "sweep" else cfg.get("p_list"),
+            "throughput_rps": agg.get("throughput_rps") or summ.get("best_rps"),
+            "p95": (agg.get("latency_ms") or {}).get("p95"),
+            "errors": agg.get("error_count"),
+            "cost": (agg.get("cost") or {}).get("total") or summ.get("total_cost"),
+        })
+    return out
+
+
+def try_recent_runs(limit=20):
+    """Best-effort read. Returns (rows, error) — exactly one is None."""
+    try:
+        return recent_runs(limit), None
+    except PyMongoError as e:
+        return None, f"{type(e).__name__}: {e}"

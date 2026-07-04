@@ -23,7 +23,7 @@ import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from llm import Gemini, try_save_run
+from llm import Gemini, try_save_run, try_recent_runs
 
 PORT = 4454
 llm = Gemini()
@@ -121,6 +121,28 @@ async def run_batch(params, n, p, cost_cap):
     records = await asyncio.gather(*[one(i) for i in range(n)])
     wall_ms = ms(time.perf_counter() - t0)
     return records, wall_ms, state["capped"]
+
+
+async def run_sweep(params, n, p_list, total_budget):
+    """Run the same N-request batch at each P in p_list, one P at a time, so we
+    can see how latency/throughput/errors change as concurrency climbs. The
+    whole sweep shares a single spend budget and stops early once it's used up.
+    Returns (steps, spent) where each step is an aggregate plus its P."""
+    steps = []
+    spent = 0.0
+    for p in p_list:
+        remaining = total_budget - spent
+        if remaining <= 0:
+            steps.append({"parallelism": p, "step_skipped": True})
+            continue
+        records, wall_ms, capped = await run_batch(params, n, p, remaining)
+        agg = aggregate(records, wall_ms, p, capped)
+        spent += agg["cost"]["total"]
+        # Drop the full per-request array from the sweep payload — one row per P
+        # is what the curve needs, and it keeps the saved doc small.
+        agg.pop("distinct", None)
+        steps.append(agg)
+    return steps, spent
 
 
 def _pct(sorted_vals, p):
@@ -221,9 +243,9 @@ PAGE = """<!doctype html>
   button { margin-top: 16px; padding: 9px 18px; font: inherit; font-weight: 600;
            border: 0; border-radius: 6px; background: #1a1a1a; color: #fff; cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
-  #panel { display: none; margin-top: 22px; border: 1px solid #e3e3e3;
+  #panel, #sweeppanel { display: none; margin-top: 22px; border: 1px solid #e3e3e3;
            border-radius: 10px; padding: 14px 16px; background: #fafafa; }
-  #panel.show { display: block; }
+  #panel.show, #sweeppanel.show { display: block; }
   .tiles { display: flex; gap: 24px; flex-wrap: wrap; }
   .tile .n { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .tile .k { font-size: 11px; color: #777; text-transform: uppercase; letter-spacing: .04em; }
@@ -244,6 +266,22 @@ PAGE = """<!doctype html>
   .meta { margin-top: 12px; font-size: 12px; color: #555; }
   .meta code { background: #eee; padding: 1px 5px; border-radius: 4px; }
   .runid { color: #aaa; font-size: 11px; margin-top: 8px; }
+  .actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+  .actions .or { color: #888; font-size: 13px; }
+  .actions input { max-width: 200px; margin: 0; }
+  .actions button { margin-top: 0; }
+  #sweepbtn { background: #234; }
+  table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px; }
+  th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid #eee;
+           font-variant-numeric: tabular-nums; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { font-size: 11px; color: #777; text-transform: uppercase; letter-spacing: .03em; }
+  tr.best td { background: #eef7ee; }
+  tr.haserr td { color: #b00020; }
+  .sect-h { font-size: 13px; font-weight: 700; margin: 26px 0 2px; display: flex;
+            align-items: center; gap: 10px; }
+  .sect-h button { margin: 0; padding: 4px 10px; font-size: 12px; background: #666; }
+  .empty { color: #aaa; font-size: 12px; margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -292,8 +330,17 @@ PAGE = """<!doctype html>
     </div>
   </div>
 
-  <button id="go" onclick="ask()">Run load test</button>
+  <div class="actions">
+    <button id="go" onclick="ask()">Run once — N at P</button>
+    <span class="or">or sweep concurrency →</span>
+    <input id="plist" value="1, 5, 10, 25, 50" title="Comma-separated P values.">
+    <button id="sweepbtn" onclick="sweep()">Run P-sweep</button>
+  </div>
+  <div class="hint">Sweep runs N requests at <b>each</b> P in turn and tables
+    latency / throughput / errors vs P — that's how you find where Vertex starts
+    to degrade. The whole sweep shares the one $10 cap.</div>
 
+  <!-- Single-run results -->
   <div id="panel">
     <div class="tiles">
       <div class="tile" title="Total time to finish all N requests at parallelism P."><div class="n" id="t-wall">–</div><div class="k">wall time</div></div>
@@ -330,6 +377,24 @@ PAGE = """<!doctype html>
     <div class="runid" id="runid"></div>
   </div>
 
+  <!-- P-sweep results -->
+  <div id="sweeppanel">
+    <div class="sect-h">P-sweep — latency &amp; throughput vs concurrency</div>
+    <p class="caption">Each row is N requests run at that P. Read down the columns:
+      when <b>p95/p100 climb</b> or <b>errors</b> appear while <b>throughput</b>
+      stops rising, that P is the degrade point. Best-throughput row is highlighted.</p>
+    <table id="sweeptable"></table>
+    <div class="runid" id="sweepid"></div>
+  </div>
+
+  <!-- Recent runs from MongoDB -->
+  <div class="sect-h">Recent runs
+    <button onclick="loadRuns()">refresh</button>
+    <span class="or" style="font-weight:400">saved to MongoDB · evertune_loadtest.run</span>
+  </div>
+  <table id="runstable"></table>
+  <div class="empty" id="runsempty"></div>
+
 <script>
 const $ = id => document.getElementById(id);
 const usd = (n, p = 2) => '$' + (n < 0.01 ? n.toPrecision(p) : n.toFixed(p));
@@ -357,6 +422,7 @@ async function ask() {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || 'request failed');
     render(d);
+    loadRuns();
   } catch (e) {
     $('panel').className = 'show';
     $('banner').innerHTML = '<div class="banner err">' + esc(e.message) + '</div>';
@@ -408,10 +474,107 @@ function render(d) {
   $('meta').innerHTML = meta;
 
   $('runid').textContent = d.run_id
-    ? ('saved to MongoDB evertune_loadtest.run · _id ' + d.run_id + '  (compare runs with `make runs`)')
+    ? ('saved to MongoDB evertune_loadtest.run · _id ' + d.run_id)
     : ('not saved to MongoDB: ' + (d.persist_error || '?'));
   $('panel').className = 'show';
 }
+
+function body() {
+  return {
+    system_prompt: $('sys').value,
+    question: $('q').value,
+    temperature: parseFloat($('temp').value),
+    thinking_budget: parseInt($('think').value, 10),
+    n: parseInt($('n').value, 10),
+    p: parseInt($('p').value, 10),
+    enable_web: $('web').checked,
+    logprobs: $('lp').checked,
+  };
+}
+
+async function sweep() {
+  $('sweepbtn').disabled = true;
+  $('sweepbtn').textContent = 'sweeping…';
+  $('sweeppanel').className = '';
+  try {
+    const r = await fetch('/sweep', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({...body(), p_list: $('plist').value})
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'sweep failed');
+    renderSweep(d);
+    loadRuns();
+  } catch (e) {
+    $('sweeppanel').className = 'show';
+    $('sweeptable').innerHTML = '<tr><td class="haserr">' + esc(e.message) + '</td></tr>';
+  } finally {
+    $('sweepbtn').disabled = false;
+    $('sweepbtn').textContent = 'Run P-sweep';
+  }
+}
+
+function renderSweep(d) {
+  const best = d.steps.reduce((m, s) => Math.max(m, s.throughput_rps || 0), 0);
+  const head = ['P', 'ok/err', 'skipped', 'rps', 'p50', 'p95', 'p100', 'queue max', 'thinking', 'cost']
+    .map(h => '<th>' + h + '</th>').join('');
+  const rows = d.steps.map(s => {
+    if (s.step_skipped)
+      return '<tr class="haserr"><td>' + s.parallelism +
+             '</td><td colspan="9">skipped — $' + d.cost_cap + ' cap reached</td></tr>';
+    const l = s.latency_ms, cls = [];
+    if ((s.throughput_rps || 0) === best && best > 0) cls.push('best');
+    if (s.error_count) cls.push('haserr');
+    return '<tr class="' + cls.join(' ') + '">' +
+      '<td>' + s.parallelism + '</td>' +
+      '<td>' + s.ok + ' / ' + s.error_count + '</td>' +
+      '<td>' + s.skipped + '</td>' +
+      '<td><b>' + s.throughput_rps + '</b></td>' +
+      '<td>' + l.p50 + '</td><td>' + l.p95 + '</td><td>' + l.p100 + '</td>' +
+      '<td>' + s.queue_ms.p100 + '</td>' +
+      '<td>' + s.usage.reasoning.toLocaleString() + '</td>' +
+      '<td>' + usd(s.cost.total, 3) + '</td></tr>';
+  }).join('');
+  $('sweeptable').innerHTML = '<tr>' + head + '</tr>' + rows;
+  $('sweepid').textContent =
+    'N=' + d.n + ' per step · total ' + usd(d.total_cost, 3) +
+    (d.run_id ? ' · saved _id ' + d.run_id : ' · not saved: ' + (d.persist_error || '?'));
+  $('sweeppanel').className = 'show';
+}
+
+async function loadRuns() {
+  try {
+    const r = await fetch('/runs');
+    const d = await r.json();
+    const rows = d.runs || [];
+    if (!rows.length) {
+      $('runstable').innerHTML = '';
+      $('runsempty').textContent = d.error ? ('MongoDB: ' + d.error) : 'No runs saved yet.';
+      return;
+    }
+    $('runsempty').textContent = '';
+    const head = ['when', 'type', 'question', 'N', 'P', 'rps', 'p95', 'err', 'cost']
+      .map(h => '<th>' + h + '</th>').join('');
+    const body = rows.map(x => {
+      const when = x.created_at ? x.created_at.replace('T', ' ').slice(5, 16) : '–';
+      return '<tr' + (x.errors ? ' class="haserr"' : '') + '>' +
+        '<td>' + when + '</td>' +
+        '<td>' + x.type + '</td>' +
+        '<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis">' + esc(x.question || '') + '</td>' +
+        '<td>' + (x.n ?? '–') + '</td>' +
+        '<td>' + (Array.isArray(x.p) ? x.p.join('/') : (x.p ?? '–')) + '</td>' +
+        '<td>' + (x.throughput_rps ?? '–') + '</td>' +
+        '<td>' + (x.p95 ?? '–') + '</td>' +
+        '<td>' + (x.errors ?? '–') + '</td>' +
+        '<td>' + (x.cost != null ? usd(x.cost, 3) : '–') + '</td></tr>';
+    }).join('');
+    $('runstable').innerHTML = '<tr>' + head + '</tr>' + body;
+  } catch (e) {
+    $('runsempty').textContent = 'Could not load runs: ' + e.message;
+  }
+}
+
+loadRuns();  // show saved history as soon as the page opens
 </script>
 </body>
 </html>"""
@@ -429,50 +592,99 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             self._send(200, PAGE, "text/html; charset=utf-8")
+        elif self.path == "/runs":
+            rows, err = try_recent_runs(20)
+            self._send(200, json.dumps({"runs": rows or [], "error": err}))
         else:
             self._send(404, json.dumps({"error": "not found"}))
 
+    def _read_json(self):
+        length = int(self.headers.get("Content-Length", 0))
+        return json.loads(self.rfile.read(length) or b"{}")
+
+    def _params(self, req):
+        return dict(
+            system_prompt=req.get("system_prompt", ""),
+            question=req.get("question", ""),
+            temperature=float(req.get("temperature", 1.0)),
+            thinking_budget=int(req.get("thinking_budget", -1)),
+            enable_web=bool(req.get("enable_web", False)),
+            logprobs=5 if req.get("logprobs") else None,
+        )
+
     def do_POST(self):
-        if self.path != "/ask":
-            self._send(404, json.dumps({"error": "not found"}))
-            return
         try:
-            length = int(self.headers.get("Content-Length", 0))
-            req = json.loads(self.rfile.read(length) or b"{}")
-
-            n = max(1, min(MAX_SAMPLES, int(req.get("n", 1))))
-            p = max(1, min(MAX_PARALLELISM, int(req.get("p", llm.parallelism()))))
-            params = dict(
-                system_prompt=req.get("system_prompt", ""),
-                question=req.get("question", ""),
-                temperature=float(req.get("temperature", 1.0)),
-                thinking_budget=int(req.get("thinking_budget", -1)),
-                enable_web=bool(req.get("enable_web", False)),
-                logprobs=5 if req.get("logprobs") else None,
-            )
-
-            records, wall_ms, capped = run_async(run_batch(params, n, p, MAX_RUN_COST))
-            agg = aggregate(records, wall_ms, p, capped)
-            agg["cost_cap"] = MAX_RUN_COST
-
-            # Persist the whole run (config + aggregate + every request).
-            doc = {
-                "created_at": datetime.now(timezone.utc),
-                "config": {
-                    "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
-                    "n": n, "p": p, **params, "cost_cap": MAX_RUN_COST,
-                },
-                "aggregate": {k: v for k, v in agg.items() if k != "distinct"},
-                "distinct": agg["distinct"],
-                "requests": records,
-            }
-            run_id, persist_error = try_save_run(doc)
-            agg["run_id"] = run_id
-            agg["persist_error"] = persist_error
-
-            self._send(200, json.dumps(agg))
+            if self.path == "/ask":
+                self._handle_ask(self._read_json())
+            elif self.path == "/sweep":
+                self._handle_sweep(self._read_json())
+            else:
+                self._send(404, json.dumps({"error": "not found"}))
         except Exception as e:
             self._send(500, json.dumps({"error": f"{type(e).__name__}: {e}"}))
+
+    def _handle_ask(self, req):
+        n = max(1, min(MAX_SAMPLES, int(req.get("n", 1))))
+        p = max(1, min(MAX_PARALLELISM, int(req.get("p", llm.parallelism()))))
+        params = self._params(req)
+
+        records, wall_ms, capped = run_async(run_batch(params, n, p, MAX_RUN_COST))
+        agg = aggregate(records, wall_ms, p, capped)
+        agg["cost_cap"] = MAX_RUN_COST
+
+        # Persist the whole run (config + aggregate + every request).
+        doc = {
+            "created_at": datetime.now(timezone.utc),
+            "type": "run",
+            "config": {
+                "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+                "n": n, "p": p, **params, "cost_cap": MAX_RUN_COST,
+            },
+            "aggregate": {k: v for k, v in agg.items() if k != "distinct"},
+            "distinct": agg["distinct"],
+            "requests": records,
+        }
+        run_id, persist_error = try_save_run(doc)
+        agg["run_id"] = run_id
+        agg["persist_error"] = persist_error
+        self._send(200, json.dumps(agg))
+
+    def _handle_sweep(self, req):
+        n = max(1, min(MAX_SAMPLES, int(req.get("n", 1))))
+        # Parse "1, 5, 10, 25, 50" -> [1,5,10,25,50], clamped and de-duped.
+        raw = str(req.get("p_list", "1,5,10,25,50")).replace(" ", "")
+        p_list, seen = [], set()
+        for tok in raw.split(","):
+            if not tok:
+                continue
+            p = max(1, min(MAX_PARALLELISM, int(tok)))
+            if p not in seen:
+                seen.add(p)
+                p_list.append(p)
+        p_list = p_list or [llm.parallelism()]
+        params = self._params(req)
+
+        steps, spent = run_async(run_sweep(params, n, p_list, MAX_RUN_COST))
+        best_rps = max((s.get("throughput_rps", 0) for s in steps), default=0)
+        result = {
+            "steps": steps, "n": n, "p_list": p_list,
+            "total_cost": spent, "cost_cap": MAX_RUN_COST,
+        }
+
+        doc = {
+            "created_at": datetime.now(timezone.utc),
+            "type": "sweep",
+            "config": {
+                "model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+                "n": n, "p_list": p_list, **params, "cost_cap": MAX_RUN_COST,
+            },
+            "summary": {"total_cost": spent, "best_rps": best_rps},
+            "steps": steps,
+        }
+        run_id, persist_error = try_save_run(doc)
+        result["run_id"] = run_id
+        result["persist_error"] = persist_error
+        self._send(200, json.dumps(result))
 
     def log_message(self, *args):
         pass  # quiet

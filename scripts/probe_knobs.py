@@ -6,6 +6,10 @@ Covers: plain call, thinking off, logprobs, and web grounding.
 Run:  GOOGLE_CLOUD_PROJECT=evertune-tests .venv/bin/python scripts/probe_knobs.py
 """
 import asyncio
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from llm import Gemini
 
