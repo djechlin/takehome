@@ -46,9 +46,11 @@ class Gemini(LLM):
         # reasoning before the answer. Those are billed at the output rate but
         # live in a separate field, so fold them into output_tokens — otherwise
         # cost is under-reported by 2-4x (and the load test would be optimistic).
-        output_tokens = (usage.candidates_token_count or 0) + (usage.thoughts_token_count or 0)
+        reasoning_tokens = usage.thoughts_token_count or 0
+        output_tokens = (usage.candidates_token_count or 0) + reasoning_tokens
         return LLM.SimpleResponse(
             answer=response.text,
             input_tokens=usage.prompt_token_count,
             output_tokens=output_tokens,
+            reasoning_tokens=reasoning_tokens,
         )
