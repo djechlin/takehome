@@ -15,6 +15,7 @@ Run:  python3 server.py     ->  http://localhost:4454
 """
 import asyncio
 import glob
+import hashlib
 import json
 import os
 import sys
@@ -214,6 +215,39 @@ def aggregate(records, wall_ms, p, capped):
         },
         "price": {"input_per_m": PRICE_IN_PER_M, "output_per_m": PRICE_OUT_PER_M},
     }
+
+
+ANSWER_PREVIEW_CHARS = 100
+
+
+def _compact_answer(text):
+    """Full answers × N blow past Mongo's 16MB doc limit, so we persist a short
+    preview + a hash (to still tell responses apart and group duplicates) + the
+    original length, instead of the whole text."""
+    text = text or ""
+    return {
+        "answer_preview": text[:ANSWER_PREVIEW_CHARS],
+        "answer_hash": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
+        "answer_len": len(text),
+    }
+
+
+def compact_for_storage(records, distinct):
+    """Build storable copies of the per-request records and the distinct-answer
+    list with full answers replaced by preview+hash. The live HTTP response
+    keeps the full text — only what we save to Mongo is shrunk."""
+    slim = []
+    for r in records:
+        if "answer" in r:
+            c = {k: v for k, v in r.items() if k != "answer"}
+            c.update(_compact_answer(r["answer"]))
+            slim.append(c)
+        else:
+            slim.append(r)
+    slim_distinct = [
+        {**_compact_answer(d["answer"]), "count": d["count"]} for d in distinct
+    ]
+    return slim, slim_distinct
 
 
 PAGE = """<!doctype html>
@@ -676,7 +710,9 @@ class Handler(BaseHTTPRequestHandler):
         agg = aggregate(records, wall_ms, p, capped)
         agg["cost_cap"] = MAX_RUN_COST
 
-        # Persist the whole run (config + aggregate + every request).
+        # Persist the run (config + aggregate + every request). Answers are
+        # stored as preview+hash, not full text, to stay under Mongo's 16MB cap.
+        slim_records, slim_distinct = compact_for_storage(records, agg["distinct"])
         doc = {
             "created_at": datetime.now(timezone.utc),
             "type": "run",
@@ -685,8 +721,8 @@ class Handler(BaseHTTPRequestHandler):
                 "n": n, "p": p, **params, "cost_cap": MAX_RUN_COST,
             },
             "aggregate": {k: v for k, v in agg.items() if k != "distinct"},
-            "distinct": agg["distinct"],
-            "requests": records,
+            "distinct": slim_distinct,
+            "requests": slim_records,
         }
         run_id, persist_error = try_save_run(doc)
         agg["run_id"] = run_id

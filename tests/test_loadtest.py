@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from server import aggregate
+from server import aggregate, compact_for_storage, ANSWER_PREVIEW_CHARS
 from llm import try_save_run
 from llm.store import _collection
 
@@ -45,6 +45,27 @@ def test_aggregate_counts_and_latency():
     assert agg["throughput_rps"] == 2.0
     # Errors don't contribute cost.
     assert agg["cost"]["total"] == pytest.approx(0.00021)
+
+
+def test_compact_for_storage_strips_full_answers():
+    long = "x" * 5000
+    records = [{"ok": True, "answer": long, "input": 1, "output": 2},
+               {"ok": False, "error": "boom"}]  # error record: no answer field
+    distinct = [{"answer": long, "count": 3}]
+    slim, slim_distinct = compact_for_storage(records, distinct)
+
+    # ok record: full answer gone, preview+hash+len present
+    assert "answer" not in slim[0]
+    assert slim[0]["answer_preview"] == long[:ANSWER_PREVIEW_CHARS]
+    assert len(slim[0]["answer_hash"]) == 16
+    assert slim[0]["answer_len"] == 5000
+    assert slim[0]["input"] == 1  # other fields preserved
+    # error record passes through untouched
+    assert slim[1] == {"ok": False, "error": "boom"}
+    # distinct compacted too, count kept
+    assert "answer" not in slim_distinct[0] and slim_distinct[0]["count"] == 3
+    # a compacted doc is tiny vs the original ~5KB answer
+    assert len(str(slim[0])) < 300
 
 
 def test_store_roundtrip():
