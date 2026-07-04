@@ -32,7 +32,7 @@ VertexAI serves 2.5-flash under **DSQ (Dynamic Shared Quota)**: instead of a fix
 
 ## How DSQ works (the two lanes)
 
-It's not "unlimited until it randomly breaks." Your org has a default **tokens-per-second (TPS) threshold** that splits traffic into two priority lanes:
+It's not "unlimited until it randomly breaks." Your org has a default **tokens-per-second (TPS) threshold** — note this is a *token* rate, and per *second*, not the requests-per-minute the legacy quota table below reports — that splits traffic into two priority lanes:
 
 1. **Within threshold → high priority, ~99.5% SLO.** This is the "good SLA" fast lane.
 2. **Above threshold → low priority, best-effort.** Excess requests get throughput only when the shared pool has spare capacity, and otherwise come back as **429 `RESOURCE_EXHAUSTED`**. This is the "shaky SLA" slow lane, and where load-shedding happens under contention.
@@ -47,7 +47,7 @@ I confirmed the DSQ model by reading the actual project quota rather than guessi
 | gemini-2.5-flash-*-tts | 150 | — | — |
 | gemini-1.5-flash | 200 | 4,000,000 | fixed |
 
-The tell is the `−1` token limits plus the *absence* of a model-specific request bucket: 2.5-flash isn't governed by a per-project number, it's DSQ. Compare `gemini-1.5-flash`, which still carries old-style fixed quotas (200 QPM, 4M input TPM). So the literal "5 requests/min" default is a red herring — if it were the real limit the model would be unusable, and it isn't.
+**The unit mismatch here is the point, not a contradiction.** The Service Usage API only exposes the *legacy* per-minute quota metrics — requests/min and tokens/min. DSQ doesn't govern on those; it governs on the tokens-per-*second* shared-pool threshold described above, which this API doesn't surface at all. So for a DSQ model the legacy per-minute buckets go vestigial: they read either `−1` (no legacy cap) or a stale default like the "5 requests/min" — which is a red herring, since 5/min would make the model unusable and it plainly isn't. Contrast `gemini-1.5-flash`, which predates DSQ and still carries *real* fixed per-minute quotas (200 RPM, 4M input TPM) — that's what a genuinely governed metric looks like. In short: the table shows the **absence** of a per-minute limit; the actual governor is the TPS threshold, measured in different units and not reported here.
 
 I checked empirically too: a burst of **N=20 at P=10 returned 20/20 with zero 429s** (p50 2.9 s, p95 7.4 s, ~$0.0012/request). So at small concurrency there's comfortable headroom — the DSQ fast lane is real.
 
