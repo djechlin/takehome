@@ -1,20 +1,3 @@
-"""Persist load-test runs to MongoDB.
-
-One document per run in db `evertune_loadtest`, collection `run`. The document
-holds the config, the rolled-up aggregate, and the full per-request array — so a
-run is self-contained and you can diff P=10 vs P=50 later by querying the
-collection. Best-effort: if Mongo is down the caller still gets its results,
-just with a persist error attached.
-
-Connection is resolved in this order:
-    MONGO_URI                            explicit full URI wins (CI/overrides)
-    MONGODB_URL/_USERNAME/_PASSWORD      Atlas SRV parts (from .env.local in dev,
-                                         from Secret Manager -> env in prod)
-    mongodb://localhost:27017            local fallback
-
-    MONGO_DB   database name (default: evertune_loadtest)
-"""
-
 import os
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -25,10 +8,11 @@ from pymongo.errors import PyMongoError
 _client = None
 
 
-def _load_env_local():
-    """Load KEY=VALUE lines from .env.local at the repo root into os.environ,
-    without overriding vars already set (real env / Secret Manager win)."""
-    path = Path(__file__).resolve().parent.parent / ".env.local"
+def _load_dotenv():
+    """Load KEY=VALUE lines from .env at the repo root into os.environ, without
+    overriding vars already set. .env is git-ignored but NOT gcloud-ignored, so
+    the same file serves local dev and the deployed Cloud Run image."""
+    path = Path(__file__).resolve().parent.parent / ".env"
     if not path.exists():
         return
     for line in path.read_text().splitlines():
@@ -54,7 +38,7 @@ def _mongo_uri():
     return "mongodb://localhost:27017"
 
 
-_load_env_local()
+_load_dotenv()
 
 
 def _collection():
@@ -65,13 +49,11 @@ def _collection():
 
 
 def save_run(doc):
-    """Insert one run document. Returns its str _id, or raises PyMongoError."""
     result = _collection().insert_one(doc)
     return str(result.inserted_id)
 
 
 def try_save_run(doc):
-    """Best-effort save. Returns (run_id, error) — exactly one is None."""
     try:
         return save_run(doc), None
     except PyMongoError as e:
@@ -79,8 +61,6 @@ def try_save_run(doc):
 
 
 def recent_runs(limit=20):
-    """Return compact summaries of the most recent runs/sweeps, newest first,
-    JSON-serializable (ObjectId and datetime stringified)."""
     cur = (
         _collection()
         .find(
@@ -138,7 +118,6 @@ def recent_runs(limit=20):
 
 
 def try_recent_runs(limit=20):
-    """Best-effort read. Returns (rows, error) — exactly one is None."""
     try:
         return recent_runs(limit), None
     except PyMongoError as e:
