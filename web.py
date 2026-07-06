@@ -399,11 +399,15 @@ async function loadRuns() {
     }
     $('runsempty').textContent = '';
     const head = ['when', 'question', 'N', 'P', 'temp', 'web',
-                  'ok/err', 'distinct', 'rps', 'p50', 'in tok', 'out tok', 'tok/min', 'cost']
+                  'ok/err', 'distinct', 'duration', 'rps', 's/req', 'p50',
+                  'in tok', 'out tok', 'tok/min', 'cost']
       .map(h => '<th>' + h + '</th>').join('');
     const tok = v => (v == null ? '–'
       : v < 1000 ? v.toLocaleString()
       : Math.round(v / 1000).toLocaleString() + 'K');
+    // seconds-per-request: sub-second shows ms, else 1 decimal of seconds
+    const spr = v => (v == null ? '–'
+      : v < 1 ? Math.round(v * 1000) + ' ms' : v.toFixed(1) + ' s');
     const body = rows.map(x => {
       const start = x.started_at || x.created_at;
       const when = start
@@ -422,7 +426,9 @@ async function loadRuns() {
         '<td>' + (x.web ? 'yes' : '–') + '</td>' +
         '<td>' + okerr + '</td>' +
         '<td>' + (x.distinct_count ?? '–') + '</td>' +
+        '<td>' + secD(x.duration_ms) + '</td>' +
         '<td>' + (x.throughput_rps ?? '–') + '</td>' +
+        '<td>' + spr(x.sec_per_req) + '</td>' +
         '<td>' + secD(x.p50) + '</td>' +
         '<td>' + tok(x.in_tok) + '</td>' +
         '<td>' + tok(x.out_tok) + '</td>' +
@@ -449,7 +455,7 @@ async function toggleRun(id, tr) {
   row.className = 'detailrow';
   row.id = 'detail-' + id;
   const td = document.createElement('td');
-  td.colSpan = 14;
+  td.colSpan = 16;
   td.innerHTML = '<span class="dim">loading…</span>';
   row.appendChild(td);
   tr.after(row);

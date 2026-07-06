@@ -88,6 +88,33 @@ def recent_runs(limit=20):
         lat = agg.get("latency_ms") or {}
         is_sweep = d.get("type") == "sweep"
         usage = agg.get("usage") or {}
+
+        # Total experiment duration = wall clock from first request to last,
+        # measured off the stored timestamps (falls back to the batch wall_ms).
+        # For a sweep this spans every P step, not just one batch.
+        started, ended = d.get("started_at"), d.get("ended_at")
+        if started and ended:
+            duration_ms = (ended - started).total_seconds() * 1000
+        else:
+            duration_ms = agg.get("wall_ms")
+
+        # Total requests fired across the whole experiment. A sweep runs N at
+        # each P, so it's N × (number of P steps); a single run is just N.
+        n = cfg.get("n")
+        if is_sweep:
+            steps = len(cfg.get("p_list") or [])
+            requests = n * steps if (n is not None and steps) else None
+        else:
+            requests = agg.get("requested") or n
+
+        # Throughput as experiment duration / request (seconds per request,
+        # amortized over the whole experiment — the inverse of req/s).
+        sec_per_req = (
+            (duration_ms / 1000) / requests
+            if duration_ms is not None and requests
+            else None
+        )
+
         out.append(
             {
                 "id": str(d["_id"]),
@@ -98,6 +125,9 @@ def recent_runs(limit=20):
                     d["started_at"].isoformat() if d.get("started_at") else None
                 ),
                 "ended_at": (d["ended_at"].isoformat() if d.get("ended_at") else None),
+                "duration_ms": duration_ms,
+                "requests": requests,
+                "sec_per_req": sec_per_req,
                 "tokens_per_min": agg.get("tokens_per_min"),
                 "type": d.get("type", "run"),
                 "model": cfg.get("model"),

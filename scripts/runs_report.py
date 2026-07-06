@@ -30,6 +30,13 @@ def _dur(ms):
     return f"{m}m{s:02d}s"
 
 
+def _persec(secs):
+    """Seconds-per-request: 240ms or 3.4s."""
+    if secs is None:
+        return "-"
+    return f"{round(secs * 1000)}ms" if secs < 1 else f"{secs:.1f}s"
+
+
 def main():
     rows, err = try_recent_runs(20)
     if err:
@@ -42,8 +49,9 @@ def main():
         print(
             f"{_fmt(r.get('created_at'))}  "
             f"N={_fmt(r.get('n'))} P={_fmt(r.get('p'))}  "
+            f"reqs={_fmt(r.get('requests'))} dur={_dur(r.get('duration_ms'))}  "
             f"ok={_fmt(r.get('ok'))} err={_fmt(r.get('errors'))}  "
-            f"{_fmt(r.get('throughput_rps'))}rps  "
+            f"{_fmt(r.get('throughput_rps'))}rps {_persec(r.get('sec_per_req'))}/req  "
             f"p50={_dur(r.get('p50'))}"
         )
     return 0
