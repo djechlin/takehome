@@ -67,12 +67,19 @@ runs: ## Summarize saved load-test runs from MongoDB (P vs latency/errors)
 test: ## Run the test suite
 	$(PY) -m pytest -q
 
-deploy-backend-cloud-run: ## Deploy/update the Vertex-AI backend API to Cloud Run (needs MONGO_URI for persistence)
+# Atlas connection for the deployed backend: URL + username as plain env vars,
+# password mounted from Secret Manager (secret: MONGO_SECRET, default mongodb-password).
+MONGODB_URL      ?= mongodb+srv://cluster0.1a9uiru.mongodb.net/
+MONGODB_USERNAME ?= evertune_loadtest
+MONGO_SECRET     ?= mongodb-password
+
+deploy-backend-cloud-run: ## Deploy/update the Vertex-AI backend API to Cloud Run (Atlas password from Secret Manager)
 	gcloud run deploy $(SERVICE) \
 		--source . \
 		--region $(REGION) \
 		--project $(PROJECT) \
-		--set-env-vars "GOOGLE_CLOUD_PROJECT=$(PROJECT),GOOGLE_CLOUD_LOCATION=$(LOCATION)$(if $(MONGO_URI),$(comma)MONGO_URI=$(MONGO_URI))" \
+		--set-env-vars "GOOGLE_CLOUD_PROJECT=$(PROJECT),GOOGLE_CLOUD_LOCATION=$(LOCATION),MONGODB_URL=$(MONGODB_URL),MONGODB_USERNAME=$(MONGODB_USERNAME)" \
+		--set-secrets "MONGODB_PASSWORD=$(MONGO_SECRET):latest" \
 		--no-allow-unauthenticated
 
 deploy: deploy-backend-cloud-run ## Alias for deploy-backend-cloud-run
