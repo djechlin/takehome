@@ -4,7 +4,7 @@
 PROJECT  ?= evertune-tests
 LOCATION ?= us-central1
 WEB_PORT     ?= 4454
-BACKEND_PORT ?= 8080
+BACKEND_PORT ?= 4460
 
 PYTHON  ?= python3          # bootstrap interpreter (should be 3.12+)
 VENV    := .venv
@@ -57,8 +57,8 @@ smoke: ## One-shot Vertex reachability check
 shot: ## Screenshot the UI in a headless browser (server must be running)
 	$(PY) scripts/ui_screenshot.py
 
-runs: ## Summarize saved load-test runs from MongoDB (P vs latency/errors)
-	@mongosh --quiet evertune_loadtest --eval 'db.run.find({}, {created_at:1, "config.n":1, "config.p":1, "aggregate.ok":1, "aggregate.error_count":1, "aggregate.wall_ms":1, "aggregate.throughput_rps":1, "aggregate.latency_ms":1}).sort({created_at:-1}).limit(20).forEach(r => print(`${r.created_at.toISOString()}  N=${r.config.n} P=${r.config.p}  ok=${r.aggregate.ok} err=${r.aggregate.error_count}  wall=${r.aggregate.wall_ms}ms  ${r.aggregate.throughput_rps}rps  p50/p95/p100=${r.aggregate.latency_ms.p50}/${r.aggregate.latency_ms.p95}/${r.aggregate.latency_ms.p100}ms`))'
+runs: ## Summarize saved load-test runs from Atlas (P vs latency/errors)
+	@$(PY) scripts/runs_report.py
 
 test: ## Run the test suite
 	$(PY) -m pytest -q
