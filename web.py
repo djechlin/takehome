@@ -14,15 +14,54 @@ Run:  python3 web.py     ->  http://localhost:4454
 
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
 
 WEB_PORT = int(os.getenv("WEB_PORT", "4454"))
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:4460").rstrip("/")
+
+# A deployed backend on Cloud Run is private (--no-allow-unauthenticated), so
+# calls to it must carry a Google-signed identity token. web.py runs under a
+# gcloud-authenticated user, so we mint that token with
+# `gcloud auth print-identity-token` and attach it as a Bearer header — GCP's
+# documented way to reach a private service. A local backend needs none, so we
+# only do this when BACKEND_URL points somewhere other than localhost.
+_BACKEND_HOST = urlparse(BACKEND_URL).hostname or ""
+BACKEND_IS_REMOTE = _BACKEND_HOST not in ("127.0.0.1", "localhost", "::1")
+
+# Identity tokens last ~1h; cache and refresh well before expiry (shelling out
+# to gcloud on every proxied request would add ~1s of latency each time).
+_token = {"value": None, "exp": 0.0}
+_token_lock = threading.Lock()
+
+
+def _identity_token():
+    """Return a cached gcloud identity token, refreshing when near expiry."""
+    with _token_lock:
+        if _token["value"] and time.time() < _token["exp"]:
+            return _token["value"]
+        proc = subprocess.run(
+            ["gcloud", "auth", "print-identity-token"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        tok = proc.stdout.strip()
+        if proc.returncode != 0 or not tok:
+            raise RuntimeError(
+                "could not get a gcloud identity token for the private backend "
+                f"({BACKEND_URL}); run `gcloud auth login`. "
+                f"{proc.stderr.strip()}"
+            )
+        _token.update(value=tok, exp=time.time() + 3000)  # ~50 min
+        return tok
+
 
 # Count in-flight proxied requests so the file-watcher holds a restart until
 # they finish — otherwise auto-reload drops a long run mid-flight.
@@ -544,11 +583,14 @@ class Handler(BaseHTTPRequestHandler):
         with _inflight_lock:
             _inflight += 1
         try:
+            headers = {"Content-Type": "application/json"}
+            if BACKEND_IS_REMOTE:
+                headers["Authorization"] = "Bearer " + _identity_token()
             req = urllib.request.Request(
                 BACKEND_URL + self.path,
                 data=body,
                 method=method,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
             )
             with urllib.request.urlopen(req, timeout=3600) as r:
                 self._send(r.status, r.read(), r.headers.get("Content-Type"))

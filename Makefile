@@ -95,21 +95,20 @@ test: ## Run the test suite
 auth: ## Sign in Application Default Credentials — authenticates the Vertex/Gemini calls
 	gcloud auth application-default login
 
-deploy: build ## Deploy the backend to Cloud Run (source build). Uploads .env (Atlas creds) into the image; UI stays local — point it here with BACKEND_URL.
-	@echo "Deploying backend to Cloud Run as '$(SERVICE)' in $(PROJECT)/$(LOCATION)."
-	@echo "NOTE: .env (Atlas creds) IS uploaded into the image by design; the"
-	@echo "service is public (--allow-unauthenticated) and spends Vertex \$$ per run."
+deploy: build ## Deploy the backend to Cloud Run (PRIVATE, source build). Uploads .env (Atlas creds) into the image; reach it locally via `make proxy`.
+	@echo "Deploying backend to Cloud Run as '$(SERVICE)' in $(PROJECT)/$(LOCATION) (private)."
+	@echo "NOTE: .env (Atlas creds) IS uploaded into the image by design."
 	gcloud run deploy $(SERVICE) \
 		--source . \
 		--project $(PROJECT) \
 		--region $(LOCATION) \
-		--allow-unauthenticated \
+		--no-allow-unauthenticated \
 		--set-env-vars GOOGLE_CLOUD_PROJECT=$(PROJECT),GOOGLE_CLOUD_LOCATION=$(LOCATION)
 	@echo
-	@echo "Run the UI against it:  make start-web BACKEND_URL=<service-url>"
-	@echo "The service account needs roles/aiplatform.user to reach Vertex:"
-	@echo "  gcloud projects add-iam-policy-binding $(PROJECT) \\"
-	@echo "    --member=serviceAccount:<runtime-sa> --role=roles/aiplatform.user"
+	@echo "It's private (no public URL). Point the local UI at it — web.py attaches"
+	@echo "your gcloud identity token to each backend call:"
+	@echo "  make start-web BACKEND_URL=<service-url from the deploy output above>"
+	@echo "The runtime service account needs roles/aiplatform.user to reach Vertex."
 
 status: ## Print the resolved environment and whether the servers are up
 	@echo "project   : $(PROJECT)"
