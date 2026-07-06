@@ -179,6 +179,34 @@ def run_detail(run_id, examples=10):
     if not doc:
         return None
 
+    # A sweep has no per-request array — its detail is the per-P step curve,
+    # which the Runs table can't show inline otherwise. Return the saved steps.
+    if doc.get("type") == "sweep":
+
+        def step_view(s):
+            lat = s.get("latency_ms") or {}
+            q = s.get("queue_ms") or {}
+            return {
+                "parallelism": s.get("parallelism"),
+                "step_skipped": bool(s.get("step_skipped")),
+                "ok": s.get("ok"),
+                "error_count": s.get("error_count"),
+                "skipped": s.get("skipped"),
+                "throughput_rps": s.get("throughput_rps"),
+                "p50": lat.get("p50"),
+                "p95": lat.get("p95"),
+                "p100": lat.get("p100"),
+                "queue_p100": q.get("p100"),
+                "tokens_per_min": s.get("tokens_per_min"),
+                "cost": (s.get("cost") or {}).get("total"),
+            }
+
+        return {
+            "id": str(doc["_id"]),
+            "type": "sweep",
+            "steps": [step_view(s) for s in (doc.get("steps") or [])],
+        }
+
     reqs = doc.get("requests") or []
     errors = [r for r in reqs if not r.get("ok") and not r.get("skipped")]
     successes = [r for r in reqs if r.get("ok")]

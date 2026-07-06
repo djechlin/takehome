@@ -510,9 +510,7 @@ async function toggleRun(id, tr) {
 
 function renderDetail(run) {
   if (!run) return '<div class="empty">Run not found.</div>';
-  if (run.type === 'sweep')
-    return '<div class="empty">Sweep run — per-request detail isn\\'t stored ' +
-           'for sweeps; see the P-sweep table on the Load-test tab.</div>';
+  if (run.type === 'sweep') return renderSweepDetail(run);
 
   const li = inner => '<li>' + inner + '</li>';
   let h = '<div class="detailcard">';
@@ -535,6 +533,37 @@ function renderDetail(run) {
     : '<div class="empty">No successful requests.</div>';
 
   return h + '</div>';
+}
+
+// A saved sweep expands into its per-P step curve (P vs latency/throughput/
+// errors) — the same table the live sweep shows, rebuilt from the stored steps.
+function renderSweepDetail(run) {
+  const steps = run.steps || [];
+  if (!steps.length) return '<div class="empty">No sweep steps saved.</div>';
+  const tk = v => (v == null ? '–' : v < 1000 ? v.toLocaleString()
+    : Math.round(v / 1000).toLocaleString() + 'K');
+  const best = steps.reduce((m, s) => Math.max(m, s.throughput_rps || 0), 0);
+  const head = ['P', 'ok/err', 'rps', 'p50', 'p95', 'p100', 'queue max', 'tok/min', 'cost']
+    .map(h => '<th>' + h + '</th>').join('');
+  const rows = steps.map(s => {
+    if (s.step_skipped)
+      return '<tr class="haserr"><td>' + s.parallelism +
+             '</td><td colspan="8">skipped — cap reached</td></tr>';
+    const cls = [];
+    if ((s.throughput_rps || 0) === best && best > 0) cls.push('best');
+    if (s.error_count) cls.push('haserr');
+    return '<tr class="' + cls.join(' ') + '">' +
+      '<td>' + s.parallelism + '</td>' +
+      '<td>' + (s.ok ?? '–') + ' / ' + (s.error_count ?? '–') + '</td>' +
+      '<td><b>' + (s.throughput_rps ?? '–') + '</b></td>' +
+      '<td>' + secD(s.p50) + '</td><td>' + secD(s.p95) + '</td><td>' + secD(s.p100) + '</td>' +
+      '<td>' + secD(s.queue_p100) + '</td>' +
+      '<td>' + tk(s.tokens_per_min) + '</td>' +
+      '<td>' + (s.cost != null ? usd(s.cost, 3) : '–') + '</td></tr>';
+  }).join('');
+  return '<div class="detailcard"><h4>P-sweep — ' + steps.length +
+    ' steps (best-throughput row highlighted)</h4>' +
+    '<table class="steptable"><tr>' + head + '</tr>' + rows + '</table></div>';
 }
 
 function showTab(name, push = true) {
