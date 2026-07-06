@@ -1,4 +1,4 @@
-"""Persist load-test runs to a local MongoDB.
+"""Persist load-test runs to MongoDB.
 
 One document per run in db `evertune_loadtest`, collection `run`. The document
 holds the config, the rolled-up aggregate, and the full per-request array — so a
@@ -6,11 +6,18 @@ run is self-contained and you can diff P=10 vs P=50 later by querying the
 collection. Best-effort: if Mongo is down the caller still gets its results,
 just with a persist error attached.
 
-    MONGO_URI  (default: mongodb://localhost:27017)
-    MONGO_DB   (default: evertune_loadtest)
+Connection is resolved in this order:
+    MONGO_URI                            explicit full URI wins (CI/overrides)
+    MONGODB_URL/_USERNAME/_PASSWORD      Atlas SRV parts (from .env.local in dev,
+                                         from Secret Manager -> env in prod)
+    mongodb://localhost:27017            local fallback
+
+    MONGO_DB   database name (default: evertune_loadtest)
 """
 
 import os
+from pathlib import Path
+from urllib.parse import quote_plus
 
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
@@ -18,13 +25,42 @@ from pymongo.errors import PyMongoError
 _client = None
 
 
+def _load_env_local():
+    """Load KEY=VALUE lines from .env.local at the repo root into os.environ,
+    without overriding vars already set (real env / Secret Manager win)."""
+    path = Path(__file__).resolve().parent.parent / ".env.local"
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key, val = key.strip(), val.strip().strip("'\"")
+        if key and key not in os.environ:
+            os.environ[key] = val
+
+
+def _mongo_uri():
+    uri = os.getenv("MONGO_URI")
+    if uri:
+        return uri
+    host = os.getenv("MONGODB_URL")
+    user = os.getenv("MONGODB_USERNAME")
+    pw = os.getenv("MONGODB_PASSWORD")
+    if host and user and pw:
+        base = host.split("://", 1)[-1].strip("/")
+        return f"mongodb+srv://{quote_plus(user)}:{quote_plus(pw)}@{base}/"
+    return "mongodb://localhost:27017"
+
+
+_load_env_local()
+
+
 def _collection():
     global _client
     if _client is None:
-        _client = MongoClient(
-            os.getenv("MONGO_URI", "mongodb://localhost:27017"),
-            serverSelectionTimeoutMS=1500,
-        )
+        _client = MongoClient(_mongo_uri(), serverSelectionTimeoutMS=1500)
     return _client[os.getenv("MONGO_DB", "evertune_loadtest")]["run"]
 
 
