@@ -3,8 +3,14 @@
 
 PROJECT  ?= evertune-tests
 LOCATION ?= us-central1
+# Cloud Run service name for `make deploy`
+SERVICE  ?= evertune-backend
 WEB_PORT     ?= 4454
 BACKEND_PORT ?= 4460
+# Where the UI proxies data calls. Defaults to the local backend; override with
+# a Cloud Run URL to drive a deployed backend, e.g.
+#   make start-web BACKEND_URL=https://evertune-backend-xxxx.run.app
+BACKEND_URL  ?= http://127.0.0.1:$(BACKEND_PORT)
 
 PYTHON  ?= python3          # bootstrap interpreter (should be 3.12+)
 VENV    := .venv
@@ -21,7 +27,7 @@ export GOOGLE_CLOUD_LOCATION = $(LOCATION)
 .PHONY: help setup format build backend web \
 	start-backend-local stop-backend-local restart-backend-local \
 	start-web stop-web restart-web \
-	smoke probe shot runs test auth status clean
+	smoke probe shot runs test auth deploy status clean
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -44,7 +50,7 @@ backend: format ## Format, then run the backend API in the foreground (Ctrl-C to
 	PORT=$(BACKEND_PORT) $(PY) backend.py
 
 web: format ## Format, then run the web/UI server in the foreground (proxies to backend)
-	WEB_PORT=$(WEB_PORT) BACKEND_URL=http://127.0.0.1:$(BACKEND_PORT) $(PY) web.py
+	WEB_PORT=$(WEB_PORT) BACKEND_URL=$(BACKEND_URL) $(PY) web.py
 
 start-backend-local: format ## Start the backend API in the background on $(BACKEND_PORT) (-> backend.log)
 	@PORT=$(BACKEND_PORT) $(PY) backend.py > backend.log 2>&1 & \
@@ -61,8 +67,8 @@ restart-backend-local: ## Restart the backend (stop, pause for the port to free,
 	@$(MAKE) --no-print-directory start-backend-local
 
 start-web: format ## Start the web/UI server in the background on $(WEB_PORT) (-> web.log)
-	@WEB_PORT=$(WEB_PORT) BACKEND_URL=http://127.0.0.1:$(BACKEND_PORT) $(PY) web.py > web.log 2>&1 & \
-		echo "web      http://localhost:$(WEB_PORT) (pid $$!) -> web.log"
+	@WEB_PORT=$(WEB_PORT) BACKEND_URL=$(BACKEND_URL) $(PY) web.py > web.log 2>&1 & \
+		echo "web      http://localhost:$(WEB_PORT) -> $(BACKEND_URL) (pid $$!) -> web.log"
 
 stop-web: ## Stop whatever is listening on $(WEB_PORT)
 	@pids=$$(lsof -ti tcp:$(WEB_PORT)); \
@@ -88,6 +94,22 @@ test: ## Run the test suite
 
 auth: ## Sign in Application Default Credentials — authenticates the Vertex/Gemini calls
 	gcloud auth application-default login
+
+deploy: build ## Deploy the backend to Cloud Run (source build). Uploads .env (Atlas creds) into the image; UI stays local — point it here with BACKEND_URL.
+	@echo "Deploying backend to Cloud Run as '$(SERVICE)' in $(PROJECT)/$(LOCATION)."
+	@echo "NOTE: .env (Atlas creds) IS uploaded into the image by design; the"
+	@echo "service is public (--allow-unauthenticated) and spends Vertex \$$ per run."
+	gcloud run deploy $(SERVICE) \
+		--source . \
+		--project $(PROJECT) \
+		--region $(LOCATION) \
+		--allow-unauthenticated \
+		--set-env-vars GOOGLE_CLOUD_PROJECT=$(PROJECT),GOOGLE_CLOUD_LOCATION=$(LOCATION)
+	@echo
+	@echo "Run the UI against it:  make start-web BACKEND_URL=<service-url>"
+	@echo "The service account needs roles/aiplatform.user to reach Vertex:"
+	@echo "  gcloud projects add-iam-policy-binding $(PROJECT) \\"
+	@echo "    --member=serviceAccount:<runtime-sa> --role=roles/aiplatform.user"
 
 status: ## Print the resolved environment and whether the servers are up
 	@echo "project   : $(PROJECT)"
