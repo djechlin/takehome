@@ -115,6 +115,16 @@ def recent_runs(limit=20):
             else None
         )
 
+        # tokens/min. Newer docs store aggregate.tokens_per_min; older ones
+        # predate that field, so derive it from usage + duration the same way
+        # backend.aggregate() does. Keeps every historical row populated.
+        tokens_per_min = agg.get("tokens_per_min")
+        if tokens_per_min is None:
+            total_tok = (usage.get("input") or 0) + (usage.get("output") or 0)
+            base_ms = agg.get("wall_ms") or duration_ms
+            if total_tok and base_ms:
+                tokens_per_min = round(total_tok / (base_ms / 60000))
+
         out.append(
             {
                 "id": str(d["_id"]),
@@ -128,7 +138,7 @@ def recent_runs(limit=20):
                 "duration_ms": duration_ms,
                 "requests": requests,
                 "sec_per_req": sec_per_req,
-                "tokens_per_min": agg.get("tokens_per_min"),
+                "tokens_per_min": tokens_per_min,
                 "type": d.get("type", "run"),
                 "model": cfg.get("model"),
                 "question": (cfg.get("question") or "")[:70],
