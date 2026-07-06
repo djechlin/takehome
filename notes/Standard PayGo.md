@@ -31,3 +31,9 @@ There's three tiers based on customer spend 30d:
 (so you might actually bump tiers in the middle of load testing)
 
 Alleges a 30k RPM per model per region limit. (Now we're throttled at "request" not "token.")
+
+## Corrected from research (2026-07-06)
+
+- The 30k figure is actually **30,000 online inference requests / min PER PROJECT PER REGION** (default quota), *not* per-model. A 2nd region gives another 30k. Source: [gen AI quotas](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/quotas). ⚠️ table is JS-rendered — **confirm the exact number in the console for our model+region**.
+- "Limits based on global-endpoint requests" = the shared pool is **per-model, per-region**; the **global endpoint routes each request to whichever region has the most spare capacity**, so you draw from a bigger multi-region pool → **materially lower 429 rate**. This is the single highest-leverage change for high-volume traffic. See [Reduce 429s (blog)].
+- "99.5% within threshold" note: that within-threshold high-priority lane is a **best-effort SLO target, not the contractual SLA**, and 429s don't count against the SLA. See [SLA].
