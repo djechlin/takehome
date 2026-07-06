@@ -144,6 +144,10 @@ PAGE = """<!doctype html>
   .exlist .dim { color: #999; font-size: 11px; }
   .exlist code { background: #fdecef; color: #b00020; padding: 1px 5px;
                  border-radius: 4px; font-size: 12px; }
+  /* size to content so it doesn't inherit the wide runs-table width */
+  .steptable { width: auto; margin-top: 4px; }
+  .steptable th, .steptable td { padding: 5px 16px; }
+  .steptable th:first-child, .steptable td:first-child { padding-left: 2px; }
   .sect-h { font-size: 13px; font-weight: 700; margin: 26px 0 2px; display: flex;
             align-items: center; gap: 10px; }
   .sect-h button { margin: 0; padding: 4px 10px; font-size: 12px; background: #666; }
@@ -543,12 +547,12 @@ function renderSweepDetail(run) {
   const tk = v => (v == null ? '–' : v < 1000 ? v.toLocaleString()
     : Math.round(v / 1000).toLocaleString() + 'K');
   const best = steps.reduce((m, s) => Math.max(m, s.throughput_rps || 0), 0);
-  const head = ['P', 'ok/err', 'rps', 'p50', 'p95', 'p100', 'queue max', 'tok/min', 'cost']
+  const head = ['P', 'ok/err', 'rps', 'p50', 'tok/min', 'cost']
     .map(h => '<th>' + h + '</th>').join('');
   const rows = steps.map(s => {
     if (s.step_skipped)
       return '<tr class="haserr"><td>' + s.parallelism +
-             '</td><td colspan="8">skipped — cap reached</td></tr>';
+             '</td><td colspan="5">skipped — cap reached</td></tr>';
     const cls = [];
     if ((s.throughput_rps || 0) === best && best > 0) cls.push('best');
     if (s.error_count) cls.push('haserr');
@@ -556,8 +560,7 @@ function renderSweepDetail(run) {
       '<td>' + s.parallelism + '</td>' +
       '<td>' + (s.ok ?? '–') + ' / ' + (s.error_count ?? '–') + '</td>' +
       '<td><b>' + (s.throughput_rps ?? '–') + '</b></td>' +
-      '<td>' + secD(s.p50) + '</td><td>' + secD(s.p95) + '</td><td>' + secD(s.p100) + '</td>' +
-      '<td>' + secD(s.queue_p100) + '</td>' +
+      '<td>' + secD(s.p50) + '</td>' +
       '<td>' + tk(s.tokens_per_min) + '</td>' +
       '<td>' + (s.cost != null ? usd(s.cost, 3) : '–') + '</td></tr>';
   }).join('');
