@@ -21,7 +21,7 @@ export GOOGLE_CLOUD_LOCATION = $(LOCATION)
 .PHONY: help setup format build backend web \
 	start-backend-local stop-backend-local restart-backend-local \
 	start-web stop-web restart-web \
-	smoke probe shot runs test auth doctor clean
+	smoke probe shot runs test auth status clean
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -89,7 +89,7 @@ test: ## Run the test suite
 auth: ## Sign in Application Default Credentials — authenticates the Vertex/Gemini calls
 	gcloud auth application-default login
 
-doctor: ## Print the resolved environment
+status: ## Print the resolved environment
 	@echo "project   : $(PROJECT)"
 	@echo "location  : $(LOCATION)"
 	@echo "port      : $(PORT)"
