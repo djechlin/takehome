@@ -18,7 +18,7 @@ export GOOGLE_CLOUD_PROJECT  = $(PROJECT)
 export GOOGLE_CLOUD_LOCATION = $(LOCATION)
 
 .DEFAULT_GOAL := help
-.PHONY: help setup fmt backend web serve stop smoke probe shot runs test auth doctor clean
+.PHONY: help setup format build backend web serve stop smoke probe shot runs test auth doctor clean
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -30,16 +30,20 @@ setup: ## Create the venv (3.12) and install requirements
 	$(PIP) install --quiet -r requirements.txt
 	@echo "venv ready: $$($(PY) --version)"
 
-fmt: ## Format code with black (also fails fast on syntax errors)
+format: ## Format code with black (also fails fast on syntax errors)
 	$(PY) -m black $(FMT_PATHS)
 
-backend: fmt ## Format, then run the backend API in the foreground (Ctrl-C to stop)
+build: format ## Format, then byte-compile every source file (fails on any syntax/import-time error)
+	$(PY) -m compileall -q $(FMT_PATHS)
+	@echo "build ok"
+
+backend: format ## Format, then run the backend API in the foreground (Ctrl-C to stop)
 	PORT=$(BACKEND_PORT) $(PY) backend.py
 
-web: fmt ## Format, then run the web/UI server in the foreground (proxies to backend)
+web: format ## Format, then run the web/UI server in the foreground (proxies to backend)
 	WEB_PORT=$(WEB_PORT) BACKEND_URL=http://127.0.0.1:$(BACKEND_PORT) $(PY) web.py
 
-serve: fmt ## Start backend + web in the background (writes backend.log / web.log)
+serve: format ## Start backend + web in the background (writes backend.log / web.log)
 	@PORT=$(BACKEND_PORT) $(PY) backend.py > backend.log 2>&1 & echo "backend  http://localhost:$(BACKEND_PORT) (pid $$!) -> backend.log"
 	@WEB_PORT=$(WEB_PORT) BACKEND_URL=http://127.0.0.1:$(BACKEND_PORT) $(PY) web.py > web.log 2>&1 & echo "web      http://localhost:$(WEB_PORT) (pid $$!) -> web.log"
 
@@ -49,9 +53,6 @@ stop: ## Stop the background backend + web
 
 smoke: ## One-shot Vertex reachability check
 	$(PY) scripts/smoke_test.py
-
-probe: ## Show per-request latency + hidden thinking-token usage
-	$(PY) scripts/probe_thinking.py
 
 shot: ## Screenshot the UI in a headless browser (server must be running)
 	$(PY) scripts/ui_screenshot.py
@@ -72,6 +73,6 @@ doctor: ## Print the resolved environment
 	@echo "python    : $$($(PY) --version 2>/dev/null || echo 'no venv - run make setup')"
 	@echo "gcloud acct: $$(gcloud config get-value account 2>/dev/null)"
 
-clean: ## Remove the venv and local run artifacts
-	rm -rf $(VENV) backend.log web.log server.log
+clean: ## Remove the venv
+	rm -rf $(VENV)
 	@echo "cleaned"

@@ -25,10 +25,15 @@ import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from llm import Gemini, try_save_run, try_recent_runs
+from llm import (
+    GeminiLoadTestHarness,
+    try_recent_runs,
+    try_run_detail,
+    try_save_run,
+)
 
 PORT = 4454
-llm = Gemini()
+llm = GeminiLoadTestHarness()
 
 # Approximate Gemini 2.5 Flash list price (USD per 1M tokens). Thinking tokens
 # bill at the output rate and are already folded into output_tokens. Override
@@ -41,6 +46,8 @@ PRICE_OUT_PER_M = float(os.getenv("GEMINI_PRICE_OUTPUT_PER_M", "2.50"))
 MAX_SAMPLES = int(os.getenv("GEMINI_MAX_SAMPLES", "2000"))
 MAX_PARALLELISM = int(os.getenv("GEMINI_MAX_PARALLELISM", "500"))
 MAX_RUN_COST = float(os.getenv("GEMINI_MAX_RUN_COST", "10.0"))
+# Default in-flight width when a request doesn't specify P.
+DEFAULT_PARALLELISM = int(os.getenv("GEMINI_PARALLELISM", "30"))
 
 # Run ONE event loop for the whole process, in a background thread. The
 # google-genai async client's httpx pool binds to the loop it's first used on;
@@ -284,6 +291,15 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/runs":
             rows, err = try_recent_runs(20)
             self._send(200, json.dumps({"runs": rows or [], "error": err}))
+        elif self.path.startswith("/api/run/"):
+            run_id = self.path[len("/api/run/") :]
+            detail, err = try_run_detail(run_id)
+            if err:
+                self._send(200, json.dumps({"run": None, "error": err}))
+            elif detail is None:
+                self._send(404, json.dumps({"error": "run not found"}))
+            else:
+                self._send(200, json.dumps({"run": detail, "error": None}))
         else:
             self._send(404, json.dumps({"error": "not found"}))
 
@@ -314,7 +330,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_ask(self, req):
         n = max(1, min(MAX_SAMPLES, int(req.get("n", 1))))
-        p = max(1, min(MAX_PARALLELISM, int(req.get("p", llm.parallelism()))))
+        p = max(1, min(MAX_PARALLELISM, int(req.get("p", DEFAULT_PARALLELISM))))
         params = self._params(req)
 
         started = datetime.now(timezone.utc)
@@ -359,7 +375,7 @@ class Handler(BaseHTTPRequestHandler):
             if p not in seen:
                 seen.add(p)
                 p_list.append(p)
-        p_list = p_list or [llm.parallelism()]
+        p_list = p_list or [DEFAULT_PARALLELISM]
         params = self._params(req)
 
         started = datetime.now(timezone.utc)

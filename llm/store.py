@@ -2,6 +2,8 @@ import os
 from pathlib import Path
 from urllib.parse import quote_plus
 
+from bson import ObjectId
+from bson.errors import InvalidId
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
 
@@ -120,5 +122,58 @@ def recent_runs(limit=20):
 def try_recent_runs(limit=20):
     try:
         return recent_runs(limit), None
+    except PyMongoError as e:
+        return None, f"{type(e).__name__}: {e}"
+
+
+def run_detail(run_id, examples=10):
+    """Fetch one run's per-request detail: a sample of the errors we collected
+    and the successful answers. Answers were persisted as preview+hash (see
+    backend.compact_for_storage), so previews may be truncated. Returns None if
+    the id is malformed or no such run exists."""
+    try:
+        oid = ObjectId(run_id)
+    except (InvalidId, TypeError):
+        return None
+    doc = _collection().find_one({"_id": oid})
+    if not doc:
+        return None
+
+    reqs = doc.get("requests") or []
+    errors = [r for r in reqs if not r.get("ok") and not r.get("skipped")]
+    successes = [r for r in reqs if r.get("ok")]
+
+    def err_view(r):
+        return {
+            "index": r.get("index"),
+            "error": r.get("error"),
+            "service_ms": r.get("service_ms"),
+            "wait_ms": r.get("wait_ms"),
+        }
+
+    def ok_view(r):
+        return {
+            "index": r.get("index"),
+            "answer": r.get("answer_preview"),
+            "answer_len": r.get("answer_len"),
+            "truncated": (r.get("answer_len") or 0)
+            > len(r.get("answer_preview") or ""),
+            "output": r.get("output"),
+            "service_ms": r.get("service_ms"),
+        }
+
+    return {
+        "id": str(doc["_id"]),
+        "type": doc.get("type", "run"),
+        "error_count": len(errors),
+        "ok_count": len(successes),
+        "errors": [err_view(r) for r in errors[:examples]],
+        "successes": [ok_view(r) for r in successes[:examples]],
+    }
+
+
+def try_run_detail(run_id, examples=10):
+    try:
+        return run_detail(run_id, examples), None
     except PyMongoError as e:
         return None, f"{type(e).__name__}: {e}"
