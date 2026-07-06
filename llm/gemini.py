@@ -45,20 +45,21 @@ class Gemini(LLM):
         Beyond the base contract we accept three Gemini-specific knobs, all
         optional so the base-class signature still holds:
 
-          thinking_budget  -1 dynamic (model decides) · 0 off · N cap the
-                           reasoning tokens. Trades latency/cost against answer
-                           quality; proven to be a per-request knob in
-                           scripts/probe_thinking_budget.py.
-          enable_web       attach the Google Search grounding tool. Flips the
-                           measurement from "base-model knowledge" to the live
-                           retrieval path real consumer apps use — a different
-                           regime, not just a different answer.
-          logprobs         request top-N token log-probs. Lets us read the
-                           model's probability of naming a brand directly
-                           instead of sampling for it (the recall shortcut the
-                           Together provider gets via logprobs=1). Vertex support
-                           is model-dependent; surfaced as-is so failures are
-                           visible rather than hidden.
+        thinking_budget:
+            -1 dynamic (model decides), 0 off, N cap the reasoning tokens.
+            Trades latency/cost against answer quality; proven to be a
+            per-request knob in scripts/probe_thinking_budget.py.
+        enable_web:
+            Attach the Google Search grounding tool. Flips the measurement
+            from "base-model knowledge" to the live retrieval path real
+            consumer apps use — a different regime, not just a different
+            answer.
+        logprobs:
+            Request top-N token log-probs. Lets us read the model's
+            probability of naming a brand directly instead of sampling for it
+            (the recall shortcut the Together provider gets via logprobs=1).
+            Vertex support is model-dependent; surfaced as-is so failures are
+            visible rather than hidden.
         """
         config_kwargs = dict(
             system_instruction=system_prompt,
