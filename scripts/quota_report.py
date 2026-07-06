@@ -1,14 +1,3 @@
-"""Report the Vertex generate_content quotas that bound our load — QPM and
-input/output TPM — for a given base model and region. These are the numbers
-that decide "will it hold at production scale": you can hit them from a modest
-in-region setup, so knowing them matters more than raw client horsepower.
-
-Reads the Service Usage consumer-quota API with your gcloud credentials.
-
-    GOOGLE_CLOUD_PROJECT=evertune-tests .venv/bin/python scripts/quota_report.py
-    # optional: MODEL=gemini-2.5-flash REGION=us-central1
-"""
-
 import json
 import os
 import subprocess
@@ -53,9 +42,6 @@ def fetch_metrics(tok):
 
 
 def limit_for(metric, region, model):
-    """Return (effective_limit, region, base_model) for the bucket that best
-    matches our (region, model): an EXACT base_model match wins over a generic
-    default bucket, and a region match beats a global one."""
     best = None
     for lim in metric.get("consumerQuotaLimits", []):
         for b in lim.get("quotaBuckets", []):
@@ -73,7 +59,6 @@ def limit_for(metric, region, model):
 
 
 def fmt(eff):
-    # -1 = no fixed cap (dynamic shared quota / served best-effort).
     if str(eff) == "-1":
         return "-1 = no fixed cap (dynamic shared quota)"
     try:
@@ -83,8 +68,6 @@ def fmt(eff):
 
 
 def dump_buckets(metric, region):
-    """Print every bucket for this metric in `region` (all base models), so we
-    can see exactly which model-specific buckets exist. Set DUMP=1 to enable."""
     for lim in metric.get("consumerQuotaLimits", []):
         for b in lim.get("quotaBuckets", []):
             dims = b.get("dimensions", {}) or {}

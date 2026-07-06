@@ -1,17 +1,3 @@
-"""Drive the load-test console in a real (headless) browser and screenshot it,
-so we can eyeball the UI as a user without hitting Vertex or spending money.
-
-Covers all three views: the form, a populated single-run panel, and a populated
-P-sweep table — by calling the page's own render()/renderSweep() with MOCK
-payloads (the exact code a real run uses). It also seeds two fake docs into
-MongoDB so the "Recent runs" table renders end-to-end via the real /runs
-endpoint, then removes them.
-
-Assumes the server is already up on localhost:4454 (make serve).
-
-Run:  .venv/bin/python scripts/ui_screenshot.py [out_dir]
-"""
-
 import os
 import sys
 from datetime import datetime, timezone

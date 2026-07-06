@@ -1,8 +1,3 @@
-"""Quick check that we can reach Gemini 2.5 Flash on Vertex before building anything.
-
-Run:  GOOGLE_CLOUD_PROJECT=evertune-tests python3 scripts/smoke_test.py
-"""
-
 import asyncio
 import os
 

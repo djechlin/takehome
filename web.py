@@ -91,6 +91,20 @@ PAGE = """<!doctype html>
   th { font-size: 11px; color: #777; text-transform: uppercase; letter-spacing: .03em; }
   tr.best td { background: #eef7ee; }
   tr.haserr td { color: #b00020; }
+  #runstable tr[data-id] { cursor: pointer; }
+  #runstable tr[data-id]:hover td { background: #f2f6ff; }
+  #runstable tr.open td { background: #eef2fb; }
+  tr.detailrow td { text-align: left; white-space: normal; background: #f7f9fd;
+                    padding: 14px 16px; }
+  .detailcard h4 { font-size: 11px; color: #777; text-transform: uppercase;
+                   letter-spacing: .04em; margin: 0 0 6px; }
+  .detailcard h4:not(:first-child) { margin-top: 16px; }
+  .exlist { margin: 0; padding-left: 20px; font-size: 13px; }
+  .exlist li { padding: 3px 0; border-bottom: 1px dashed #e6e6e6; }
+  .exlist li:last-child { border-bottom: 0; }
+  .exlist .dim { color: #999; font-size: 11px; }
+  .exlist code { background: #fdecef; color: #b00020; padding: 1px 5px;
+                 border-radius: 4px; font-size: 12px; }
   .sect-h { font-size: 13px; font-weight: 700; margin: 26px 0 2px; display: flex;
             align-items: center; gap: 10px; }
   .sect-h button { margin: 0; padding: 4px 10px; font-size: 12px; background: #666; }
@@ -398,7 +412,8 @@ async function loadRuns() {
         : '–';
       const p = Array.isArray(x.p) ? x.p.join('/') : (x.p ?? '–');
       const okerr = (x.ok ?? '–') + ' / ' + (x.errors ?? '–');
-      return '<tr' + (x.errors ? ' class="haserr"' : '') + '>' +
+      return '<tr data-id="' + x.id + '" onclick="toggleRun(\\'' + x.id + '\\', this)"' +
+        (x.errors ? ' class="haserr"' : '') + '>' +
         '<td>' + when + '</td>' +
         '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="' + esc(x.question || '') + '">' + esc(x.question || '') + '</td>' +
         '<td>' + (x.n ?? '–') + '</td>' +
@@ -418,6 +433,63 @@ async function loadRuns() {
   } catch (e) {
     $('runsempty').textContent = 'Could not load runs: ' + e.message;
   }
+}
+
+// Click a run row to expand an inline card with that run's per-request detail —
+// the errors we collected and a sample of successful answers. Click again to
+// close. Only one card is open at a time.
+async function toggleRun(id, tr) {
+  const open = document.getElementById('detail-' + id);
+  document.querySelectorAll('tr.detailrow').forEach(e => e.remove());
+  document.querySelectorAll('#runstable tr.open').forEach(e => e.classList.remove('open'));
+  if (open) return;  // it was already open — leave it closed (toggle off)
+
+  tr.classList.add('open');
+  const row = document.createElement('tr');
+  row.className = 'detailrow';
+  row.id = 'detail-' + id;
+  const td = document.createElement('td');
+  td.colSpan = 14;
+  td.innerHTML = '<span class="dim">loading…</span>';
+  row.appendChild(td);
+  tr.after(row);
+  try {
+    const r = await fetch('/api/run/' + id);
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || 'failed to load run');
+    td.innerHTML = renderDetail(d.run);
+  } catch (e) {
+    td.innerHTML = '<div class="banner err">' + esc(e.message) + '</div>';
+  }
+}
+
+function renderDetail(run) {
+  if (!run) return '<div class="empty">Run not found.</div>';
+  if (run.type === 'sweep')
+    return '<div class="empty">Sweep run — per-request detail isn\\'t stored ' +
+           'for sweeps; see the P-sweep table on the Load-test tab.</div>';
+
+  const li = inner => '<li>' + inner + '</li>';
+  let h = '<div class="detailcard">';
+
+  h += '<h4>Errors — showing ' + run.errors.length + ' of ' + run.error_count + '</h4>';
+  h += run.errors.length
+    ? '<ol class="exlist">' + run.errors.map(e => li(
+        '<code>' + esc(e.error || 'error') + '</code> ' +
+        '<span class="dim">#' + e.index + ' · ' + secs(e.service_ms) + '</span>'
+      )).join('') + '</ol>'
+    : '<div class="empty">No errors.</div>';
+
+  h += '<h4>Success examples — showing ' + run.successes.length + ' of ' + run.ok_count + '</h4>';
+  h += run.successes.length
+    ? '<ol class="exlist">' + run.successes.map(s => li(
+        esc(s.answer || '(empty)') + (s.truncated ? '…' : '') + ' ' +
+        '<span class="dim">#' + s.index + ' · ' + (s.output ?? '?') + ' tok · ' +
+        secs(s.service_ms) + '</span>'
+      )).join('') + '</ol>'
+    : '<div class="empty">No successful requests.</div>';
+
+  return h + '</div>';
 }
 
 function showTab(name, push = true) {
@@ -443,6 +515,11 @@ loadRuns();  // prime history so the Runs tab is ready even when landing on /
 
 # Data paths are proxied verbatim to the backend; everything else serves the UI.
 _PROXY_PATHS = ("/ask", "/sweep", "/api/runs")
+
+
+def _is_proxy(path):
+    # /api/run/<id> is dynamic, so match it by prefix as well as the fixed set.
+    return path in _PROXY_PATHS or path.startswith("/api/run/")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -487,13 +564,13 @@ class Handler(BaseHTTPRequestHandler):
         # path so a refresh on /runs stays on the Runs tab.
         if self.path in ("/", "/index.html", "/runs"):
             self._send(200, PAGE, "text/html; charset=utf-8")
-        elif self.path in _PROXY_PATHS:
+        elif _is_proxy(self.path):
             self._proxy("GET")
         else:
             self._send(404, json.dumps({"error": "not found"}))
 
     def do_POST(self):
-        if self.path in _PROXY_PATHS:
+        if _is_proxy(self.path):
             length = int(self.headers.get("Content-Length", 0))
             self._proxy("POST", self.rfile.read(length) or b"{}")
         else:

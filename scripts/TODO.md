@@ -1,0 +1,3 @@
+- Deploy this on GCP
+- Understand the Gemini 2.5 flash options in general
+- caching may interfere with stuff. do you want to fuzz your input?
