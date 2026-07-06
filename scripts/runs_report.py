@@ -17,6 +17,19 @@ def _fmt(v):
     return v if v is not None else "-"
 
 
+def _dur(ms):
+    """Human-readable duration from milliseconds: 812ms, 5s, 1m12s."""
+    if ms is None:
+        return "-"
+    if ms < 1000:
+        return f"{round(ms)}ms"
+    secs = ms / 1000
+    if secs < 60:
+        return f"{round(secs)}s"
+    m, s = divmod(round(secs), 60)
+    return f"{m}m{s:02d}s"
+
+
 def main():
     rows, err = try_recent_runs(20)
     if err:
@@ -31,7 +44,7 @@ def main():
             f"N={_fmt(r.get('n'))} P={_fmt(r.get('p'))}  "
             f"ok={_fmt(r.get('ok'))} err={_fmt(r.get('errors'))}  "
             f"{_fmt(r.get('throughput_rps'))}rps  "
-            f"p50={_fmt(r.get('p50'))}ms  {_fmt(r.get('model'))}"
+            f"p50={_dur(r.get('p50'))}"
         )
     return 0
 
