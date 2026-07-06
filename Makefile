@@ -103,7 +103,8 @@ deploy: build ## Deploy the backend to Cloud Run (PRIVATE, source build). Upload
 		--project $(PROJECT) \
 		--region $(LOCATION) \
 		--no-allow-unauthenticated \
-		--set-env-vars GOOGLE_CLOUD_PROJECT=$(PROJECT),GOOGLE_CLOUD_LOCATION=$(LOCATION)
+		--set-env-vars GOOGLE_CLOUD_PROJECT=$(PROJECT),GOOGLE_CLOUD_LOCATION=$(LOCATION) \
+		--quiet
 	@echo
 	@echo "It's private (no public URL). Point the local UI at it — web.py attaches"
 	@echo "your gcloud identity token to each backend call:"
