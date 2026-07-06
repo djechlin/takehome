@@ -1,0 +1,5 @@
+- save and reuse precomputed input tokens
+- pay 10% of standard input token cost
+- implicit = automatic, enabled by default. explicit = say what to cache
+- both support global and regional
+- implicit is integrated with PT
