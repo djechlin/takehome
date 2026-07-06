@@ -89,12 +89,15 @@ test: ## Run the test suite
 auth: ## Sign in Application Default Credentials — authenticates the Vertex/Gemini calls
 	gcloud auth application-default login
 
-status: ## Print the resolved environment
+status: ## Print the resolved environment and whether the servers are up
 	@echo "project   : $(PROJECT)"
 	@echo "location  : $(LOCATION)"
-	@echo "port      : $(PORT)"
 	@echo "python    : $$($(PY) --version 2>/dev/null || echo 'no venv - run make setup')"
 	@echo "gcloud acct: $$(gcloud config get-value account 2>/dev/null)"
+	@pid=$$(lsof -ti tcp:$(BACKEND_PORT)); \
+		echo "backend   : $(BACKEND_PORT) $$([ -n "$$pid" ] && echo "up (pid $$pid)" || echo down)"
+	@pid=$$(lsof -ti tcp:$(WEB_PORT)); \
+		echo "web       : $(WEB_PORT) $$([ -n "$$pid" ] && echo "up (pid $$pid)" || echo down)"
 
 clean: ## Remove the venv
 	rm -rf $(VENV)
