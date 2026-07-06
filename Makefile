@@ -23,7 +23,7 @@ export GOOGLE_CLOUD_PROJECT  = $(PROJECT)
 export GOOGLE_CLOUD_LOCATION = $(LOCATION)
 
 .DEFAULT_GOAL := help
-.PHONY: help setup fmt backend web serve stop smoke probe shot runs test deploy auth doctor clean
+.PHONY: help setup fmt backend web serve stop smoke probe shot runs test deploy deploy-backend-cloud-run auth doctor clean
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -67,13 +67,15 @@ runs: ## Summarize saved load-test runs from MongoDB (P vs latency/errors)
 test: ## Run the test suite
 	$(PY) -m pytest -q
 
-deploy: ## Deploy/update the backend API to Cloud Run (needs MONGO_URI for persistence)
+deploy-backend-cloud-run: ## Deploy/update the Vertex-AI backend API to Cloud Run (needs MONGO_URI for persistence)
 	gcloud run deploy $(SERVICE) \
 		--source . \
 		--region $(REGION) \
 		--project $(PROJECT) \
 		--set-env-vars "GOOGLE_CLOUD_PROJECT=$(PROJECT),GOOGLE_CLOUD_LOCATION=$(LOCATION)$(if $(MONGO_URI),$(comma)MONGO_URI=$(MONGO_URI))" \
 		--no-allow-unauthenticated
+
+deploy: deploy-backend-cloud-run ## Alias for deploy-backend-cloud-run
 
 auth: ## Point gcloud ADC at the project (interactive)
 	gcloud auth application-default login
