@@ -6,24 +6,19 @@ LOCATION ?= us-central1
 WEB_PORT     ?= 4454
 BACKEND_PORT ?= 8080
 
-# Cloud Run deploy target for the backend API.
-SERVICE ?= gemini-loadtest-backend
-REGION  ?= us-central1
-
 PYTHON  ?= python3          # bootstrap interpreter (should be 3.12+)
 VENV    := .venv
 PY      := $(VENV)/bin/python
 PIP     := $(VENV)/bin/pip
 
 FMT_PATHS := llm backend.py web.py scripts
-comma := ,
 
 # Every target that touches the app gets project/location in its environment.
 export GOOGLE_CLOUD_PROJECT  = $(PROJECT)
 export GOOGLE_CLOUD_LOCATION = $(LOCATION)
 
 .DEFAULT_GOAL := help
-.PHONY: help setup fmt backend web serve stop smoke probe shot runs test deploy deploy-backend-cloud-run auth doctor clean
+.PHONY: help setup fmt backend web serve stop smoke probe shot runs test auth doctor clean
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -67,24 +62,7 @@ runs: ## Summarize saved load-test runs from MongoDB (P vs latency/errors)
 test: ## Run the test suite
 	$(PY) -m pytest -q
 
-# Atlas connection for the deployed backend: URL + username as plain env vars,
-# password mounted from Secret Manager (secret: MONGO_SECRET, default mongodb-password).
-MONGODB_URL      ?= mongodb+srv://cluster0.1a9uiru.mongodb.net/
-MONGODB_USERNAME ?= evertune_loadtest
-MONGO_SECRET     ?= mongodb-password
-
-deploy-backend-cloud-run: ## Deploy/update the Vertex-AI backend API to Cloud Run (Atlas password from Secret Manager)
-	gcloud run deploy $(SERVICE) \
-		--source . \
-		--region $(REGION) \
-		--project $(PROJECT) \
-		--set-env-vars "GOOGLE_CLOUD_PROJECT=$(PROJECT),GOOGLE_CLOUD_LOCATION=$(LOCATION),MONGODB_URL=$(MONGODB_URL),MONGODB_USERNAME=$(MONGODB_USERNAME)" \
-		--set-secrets "MONGODB_PASSWORD=$(MONGO_SECRET):latest" \
-		--no-allow-unauthenticated
-
-deploy: deploy-backend-cloud-run ## Alias for deploy-backend-cloud-run
-
-auth: ## Point gcloud ADC at the project (interactive)
+auth: ## Sign in Application Default Credentials — authenticates the Vertex/Gemini calls
 	gcloud auth application-default login
 
 doctor: ## Print the resolved environment
