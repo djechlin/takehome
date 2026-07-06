@@ -9,6 +9,8 @@ __pycache__/
 # Secrets / Configuration
 .secrets
 .env
+.env.*
+!.env.example
 
 # IDEA
 .idea/
