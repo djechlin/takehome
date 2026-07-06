@@ -7,7 +7,7 @@ this stays a thin local front end. Point it at a deployed backend with
 BACKEND_URL.
 
     WEB_PORT     (default: 4454)
-    BACKEND_URL  (default: http://127.0.0.1:8080)
+    BACKEND_URL  (default: http://127.0.0.1:4460)
 
 Run:  python3 web.py     ->  http://localhost:4454
 """
@@ -22,7 +22,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 WEB_PORT = int(os.getenv("WEB_PORT", "4454"))
-BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8080").rstrip("/")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:4460").rstrip("/")
 
 # Count in-flight proxied requests so the file-watcher holds a restart until
 # they finish — otherwise auto-reload drops a long run mid-flight.

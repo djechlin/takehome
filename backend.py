@@ -417,6 +417,6 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     # Cloud Run injects PORT; bind 0.0.0.0 so the container is reachable.
     host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "8080"))
+    port = int(os.getenv("PORT", "4460"))
     print(f"Gemini load-test backend API on http://{host}:{port}")
     ThreadingHTTPServer((host, port), Handler).serve_forever()

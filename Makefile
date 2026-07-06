@@ -18,11 +18,14 @@ export GOOGLE_CLOUD_PROJECT  = $(PROJECT)
 export GOOGLE_CLOUD_LOCATION = $(LOCATION)
 
 .DEFAULT_GOAL := help
-.PHONY: help setup format build backend web serve stop smoke probe shot runs test auth doctor clean
+.PHONY: help setup format build backend web \
+	start-backend-local stop-backend-local restart-backend-local \
+	start-web stop-web restart-web \
+	smoke probe shot runs test auth doctor clean
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
-		| awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
+		| awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
 setup: ## Create the venv (3.12) and install requirements
 	$(PYTHON) -m venv $(VENV)
@@ -43,13 +46,33 @@ backend: format ## Format, then run the backend API in the foreground (Ctrl-C to
 web: format ## Format, then run the web/UI server in the foreground (proxies to backend)
 	WEB_PORT=$(WEB_PORT) BACKEND_URL=http://127.0.0.1:$(BACKEND_PORT) $(PY) web.py
 
-serve: format ## Start backend + web in the background (writes backend.log / web.log)
-	@PORT=$(BACKEND_PORT) $(PY) backend.py > backend.log 2>&1 & echo "backend  http://localhost:$(BACKEND_PORT) (pid $$!) -> backend.log"
-	@WEB_PORT=$(WEB_PORT) BACKEND_URL=http://127.0.0.1:$(BACKEND_PORT) $(PY) web.py > web.log 2>&1 & echo "web      http://localhost:$(WEB_PORT) (pid $$!) -> web.log"
+start-backend-local: format ## Start the backend API in the background on $(BACKEND_PORT) (-> backend.log)
+	@PORT=$(BACKEND_PORT) $(PY) backend.py > backend.log 2>&1 & \
+		echo "backend  http://localhost:$(BACKEND_PORT) (pid $$!) -> backend.log"
 
-stop: ## Stop the background backend + web
-	@pkill -f backend.py && echo "backend stopped" || echo "backend: nothing running"
-	@pkill -f web.py && echo "web stopped" || echo "web: nothing running"
+stop-backend-local: ## Stop whatever is listening on $(BACKEND_PORT)
+	@pids=$$(lsof -ti tcp:$(BACKEND_PORT)); \
+		if [ -n "$$pids" ]; then kill $$pids && echo "backend stopped (pid $$pids)"; \
+		else echo "backend: nothing on port $(BACKEND_PORT)"; fi
+
+restart-backend-local: ## Restart the backend (stop, pause for the port to free, start)
+	@$(MAKE) --no-print-directory stop-backend-local
+	@sleep 1
+	@$(MAKE) --no-print-directory start-backend-local
+
+start-web: format ## Start the web/UI server in the background on $(WEB_PORT) (-> web.log)
+	@WEB_PORT=$(WEB_PORT) BACKEND_URL=http://127.0.0.1:$(BACKEND_PORT) $(PY) web.py > web.log 2>&1 & \
+		echo "web      http://localhost:$(WEB_PORT) (pid $$!) -> web.log"
+
+stop-web: ## Stop whatever is listening on $(WEB_PORT)
+	@pids=$$(lsof -ti tcp:$(WEB_PORT)); \
+		if [ -n "$$pids" ]; then kill $$pids && echo "web stopped (pid $$pids)"; \
+		else echo "web: nothing on port $(WEB_PORT)"; fi
+
+restart-web: ## Restart the web server (stop, pause for the port to free, start)
+	@$(MAKE) --no-print-directory stop-web
+	@sleep 1
+	@$(MAKE) --no-print-directory start-web
 
 smoke: ## One-shot Vertex reachability check
 	$(PY) scripts/smoke_test.py
