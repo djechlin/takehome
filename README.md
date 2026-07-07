@@ -6,6 +6,7 @@ Our goal is to determine whether some of our workloads can run on Gemini 2, and 
 
 ```
 cp .env.example .env # add the mongodb password
+make setup
 make start-backend-local
 make start-web
 ```
@@ -31,16 +32,9 @@ Also: we are not *really* load testing Gemini; we're testing that our workloads 
 
 # Results
 
-The results are noisy. All I really proved is: sometimes I can run a lot of of queries successfully, and other times I get 429s, which suggest that the load test I'm running is roughly on the same order of magnitude as the service availability for our tier.
+At parallelism=100, on Monday, some 429s showed up, suggesting this is around the load we can send to the service. On Sunday, I didn't get any 429s.
 
-The successes might be caused by running the tests on the weekend, when there are spare resources. Or, the failures might be caused by running enough tests in a row that they were not actually hermetic, and were using each other's ramp limits or rate limits over a longer period.
-
-Here are the most notable success runs and failure runs. The first row is a
-clean **pass** — a Sunday-evening N=1000 run that landed 999/1000 with spare
-throughput. The three rows below it are a Monday P-sweep (same N=300 fired at
-each P, `run_id 6a4bea102d6bc5c3be90ff1d`, total $7.83) that hits the wall:
-P=100/200 hold, P=300 tips past saturation. All rows are web off, Gemini 2.5
-Flash, temp=1.0. Start times are Pacific.
+The P=100,200,300 were run successively, in an attempt to observe degradation at higher levels, but they showed about the same performacne. I'm also running from my own laptop and network and might be hitting a limit locally regarding concurrent connections.
 
 | P | N | Start (PT) | OK / Err | RPS | P50 | Out tok/req | Thinking/req | Out tok/min |
 |--:|--:|:-----------|:---------|----:|----:|------------:|-------------:|------------:|
