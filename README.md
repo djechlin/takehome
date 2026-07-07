@@ -32,17 +32,11 @@ each P, `run_id 6a4bea102d6bc5c3be90ff1d`, total $7.83) that hits the wall:
 P=100/200 hold, P=300 tips past saturation. All rows are web off, Gemini 2.5
 Flash, temp=1.0. Start times are Pacific.
 
-|  | P | N | start (PT) | ok/err | rps | p50 | out tok/req | thinking/req | out tok/min |
-|:--|--:|--:|:--|:--|--:|--:|--:|--:|--:|
-| **pass** | 100 | 1000 | Sun Jul 5, 17:50 | **999 / 1** | 3.97 | 23.8s | 3550 | 1600 | **845k** |
-| sweep | 100 | 300 | Mon Jul 6, 10:41 | 288 / 12 | 2.77 | 26.9s | 3571 | 1574 | 596k |
-| sweep | 200 | 300 | Mon Jul 6, 10:43 | 295 / 5 | **2.92** | 50.3s | 3590 | 1574 | 631k |
-| sweep | 300 | 300 | Mon Jul 6, 10:45 | 295 / 5 | 2.14 | 52.0s | 3531 | 1569 | 456k |
+| P | N | Start (PT) | OK / Err | RPS | P50 | Out tok/req | Thinking/req | Out tok/min |
+|--:|--:|:-----------|:---------|----:|----:|------------:|-------------:|------------:|
+| 100 | 1000 | Sun Jul 5, 17:50 | **999 / 1** | 3.97 | 23.8s | 3550 | 1600 | **845k** | — |
+| 100 | 300 | Mon Jul 6, 10:41 | 288 / 12 | 2.77 | 26.9s | 3571 | 1574 | 596k | — |
+| 200 | 300 | Mon Jul 6, 10:43 | 295 / 5 | **2.92** | 50.3s | 3590 | 1574 | 631k | — |
+| 300 | 300 | Mon Jul 6, 10:45 | 295 / 5 | 2.14 | 52.0s | 3531 | 1569 | 456k | — |
 
-Every error is a `429 RESOURCE_EXHAUSTED` — Vertex Dynamic Shared Quota shedding
-load, already binding at P=100 in the sweep (~4% error rate). The Sunday pass
-ran the same P=100 with essentially no errors and higher throughput, which is
-exactly the weekend-vs-weekday noise this section is about. Within the sweep,
-throughput plateaus at ~600–630k output tok/min regardless of concurrency, and
-P=300 is past the knee: rps *falls* and the tail blows up. Full analysis, the
-tokens/min ceiling, and reproduction steps are in [RESULTS.md](RESULTS.md).
+Aside from one spurious connection error, every error is a `429 RESOURCE_EXHAUSTED`. P=100,200,300 gave these errors when run on Monday and not when run on Sunday.

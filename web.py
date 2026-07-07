@@ -165,7 +165,7 @@ PAGE = """<!doctype html>
     Fires the <b>same query N times</b> at Gemini on Vertex, running at most
     <b>P at once</b> (a queue you widen to find where Vertex starts to degrade).
     Reports latency percentiles, throughput, cost, and which distinct answers
-    came back. Each run is capped at <b>$10</b> of spend and saved to MongoDB.
+    came back. Each run is capped at <b>$100</b> of spend and saved to MongoDB.
   </p>
 
   <div class="tabs">
@@ -220,7 +220,7 @@ PAGE = """<!doctype html>
   </div>
   <div class="hint">Sweep runs N requests at <b>each</b> P in turn and tables
     latency / throughput / errors vs P — that's how you find where Vertex starts
-    to degrade. The whole sweep shares the one $10 cap.</div>
+    to degrade. The whole sweep shares the one $100 cap.</div>
 
   <!-- Single-run results -->
   <div id="panel">
@@ -235,7 +235,7 @@ PAGE = """<!doctype html>
       <span title="Parallelism actually used for this run.">P <b id="d-p">–</b></span>
       <span title="Successful requests out of requested.">ok <b id="d-ok">–</b></span>
       <span title="Requests that returned an error (e.g. 429 rate limit).">errors <b id="d-err">–</b></span>
-      <span title="Requests never sent because the $10 cap was hit first.">skipped <b id="d-skip">–</b></span>
+      <span title="Requests never sent because the $100 cap was hit first.">skipped <b id="d-skip">–</b></span>
       <span title="99th-percentile latency.">lat p99 <b id="d-p99">–</b></span>
       <span title="Time requests spent waiting for a free slot (p50 / max). High values mean P is the bottleneck, not the model.">queue p50/max <b id="d-queue">–</b></span>
       <span title="Total hidden reasoning tokens spent before answers.">thinking <b id="d-think">–</b></span>

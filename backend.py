@@ -8,7 +8,7 @@ Vertex starts to degrade (latency climbs, errors appear, throughput plateaus).
 
 Every run reports wall time, throughput, latency percentiles (p50/p95/p99/p100),
 per-request queue wait, cost, and the distinct answers with frequencies (the
-"which brands, how often" recall view). Each run is capped at $10 of spend and
+"which brands, how often" recall view). Each run is capped at $100 of spend and
 saved in full to a local MongoDB (`evertune_loadtest.run`).
 
 Run:  python3 server.py     ->  http://localhost:4454
@@ -46,7 +46,7 @@ PRICE_OUT_PER_M = float(os.getenv("GEMINI_PRICE_OUTPUT_PER_M", "2.50"))
 # box; every run also self-aborts once spend crosses MAX_RUN_COST.
 MAX_SAMPLES = int(os.getenv("GEMINI_MAX_SAMPLES", "2000"))
 MAX_PARALLELISM = int(os.getenv("GEMINI_MAX_PARALLELISM", "500"))
-MAX_RUN_COST = float(os.getenv("GEMINI_MAX_RUN_COST", "10.0"))
+MAX_RUN_COST = float(os.getenv("GEMINI_MAX_RUN_COST", "100.0"))
 # Default in-flight width when a request doesn't specify P.
 DEFAULT_PARALLELISM = int(os.getenv("GEMINI_PARALLELISM", "30"))
 
