@@ -3,13 +3,9 @@
 
 PROJECT  ?= evertune-tests
 LOCATION ?= us-central1
-# Cloud Run service name for `make deploy`
-SERVICE  ?= evertune-backend
 WEB_PORT     ?= 4454
 BACKEND_PORT ?= 4460
-# Where the UI proxies data calls. Defaults to the local backend; override with
-# a Cloud Run URL to drive a deployed backend, e.g.
-#   make start-web BACKEND_URL=https://evertune-backend-xxxx.run.app
+# Where the UI proxies data calls. Defaults to the local backend
 BACKEND_URL  ?= http://127.0.0.1:$(BACKEND_PORT)
 
 PYTHON  ?= python3          # bootstrap interpreter (should be 3.12+)
@@ -27,7 +23,7 @@ export GOOGLE_CLOUD_LOCATION = $(LOCATION)
 .PHONY: help setup format build backend web \
 	start-backend-local stop-backend-local restart-backend-local \
 	start-web stop-web restart-web \
-	smoke probe shot runs test auth deploy status clean
+	smoke probe shot runs test auth status clean
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -94,22 +90,6 @@ test: ## Run the test suite
 
 auth: ## Sign in Application Default Credentials — authenticates the Vertex/Gemini calls
 	gcloud auth application-default login
-
-deploy: build ## Deploy the backend to Cloud Run (PRIVATE, source build). Uploads .env (Atlas creds) into the image; reach it locally via `make proxy`.
-	@echo "Deploying backend to Cloud Run as '$(SERVICE)' in $(PROJECT)/$(LOCATION) (private)."
-	@echo "NOTE: .env (Atlas creds) IS uploaded into the image by design."
-	gcloud run deploy $(SERVICE) \
-		--source . \
-		--project $(PROJECT) \
-		--region $(LOCATION) \
-		--no-allow-unauthenticated \
-		--set-env-vars GOOGLE_CLOUD_PROJECT=$(PROJECT),GOOGLE_CLOUD_LOCATION=$(LOCATION) \
-		--quiet
-	@echo
-	@echo "It's private (no public URL). Point the local UI at it — web.py attaches"
-	@echo "your gcloud identity token to each backend call:"
-	@echo "  make start-web BACKEND_URL=<service-url from the deploy output above>"
-	@echo "The runtime service account needs roles/aiplatform.user to reach Vertex."
 
 status: ## Print the resolved environment and whether the servers are up
 	@echo "project   : $(PROJECT)"
