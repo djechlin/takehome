@@ -2,6 +2,16 @@ The original README is moved to `INSTRUCTIONS.md`.
 
 Our goal is to determine whether some of our workloads can run on Gemini 2, and to add evidence by running a load test.
 
+# Usage
+
+```
+cp .env.example .env # add the mongodb password
+make start-backend-local
+make start-web
+```
+
+Then visit `localhost:4454` and run an experiment, or click the `runs` tab to view existing run stats.
+
 # Gemini service overview
 
 A brief overview of Gemini's SLOs:

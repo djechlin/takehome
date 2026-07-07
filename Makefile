@@ -42,12 +42,6 @@ build: format ## Format, then byte-compile every source file (fails on any synta
 	$(PY) -m compileall -q $(FMT_PATHS)
 	@echo "build ok"
 
-backend: format ## Format, then run the backend API in the foreground (Ctrl-C to stop)
-	PORT=$(BACKEND_PORT) $(PY) backend.py
-
-web: format ## Format, then run the web/UI server in the foreground (proxies to backend)
-	WEB_PORT=$(WEB_PORT) BACKEND_URL=$(BACKEND_URL) $(PY) web.py
-
 start-backend-local: format ## Start the backend API in the background on $(BACKEND_PORT) (-> backend.log)
 	@PORT=$(BACKEND_PORT) $(PY) backend.py > backend.log 2>&1 & \
 		echo "backend  http://localhost:$(BACKEND_PORT) (pid $$!) -> backend.log"
@@ -75,9 +69,6 @@ restart-web: ## Restart the web server (stop, pause for the port to free, start)
 	@$(MAKE) --no-print-directory stop-web
 	@sleep 1
 	@$(MAKE) --no-print-directory start-web
-
-smoke: ## One-shot Vertex reachability check
-	$(PY) scripts/smoke_test.py
 
 shot: ## Screenshot the UI in a headless browser (server must be running)
 	$(PY) scripts/ui_screenshot.py
