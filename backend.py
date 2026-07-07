@@ -35,9 +35,10 @@ from llm import (
 PORT = 4454
 llm = GeminiLoadTestHarness()
 
-# Approximate Gemini 2.5 Flash list price (USD per 1M tokens). Thinking tokens
-# bill at the output rate and are already folded into output_tokens. Override
-# via env if prices change or a different model is used.
+# Gemini 2.5 Flash list price (USD per 1M tokens), confirmed 2026-07-06 against
+# https://ai.google.dev/gemini-api/docs/pricing (Standard tier: $0.30 in / $2.50
+# out). Thinking tokens bill at the output rate and are already folded into
+# output_tokens. Override via env if prices change or a different model is used.
 PRICE_IN_PER_M = float(os.getenv("GEMINI_PRICE_INPUT_PER_M", "0.30"))
 PRICE_OUT_PER_M = float(os.getenv("GEMINI_PRICE_OUTPUT_PER_M", "2.50"))
 
